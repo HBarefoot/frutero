@@ -13,8 +13,10 @@ module.exports = {
   FAN_INVERTED: false,
   LIGHT_INVERTED: true,
 
-  SENSOR_AVAILABLE: true,
+  SENSOR_AVAILABLE: process.env.SENSOR_STUB === 'true' ? false : true,
   SENSOR_READ_INTERVAL: 60,
+
+  GPIO_STUB: process.env.GPIO_STUB === 'true',
 
   FAN_ON_DURATION: 60,
   FAN_CYCLE_INTERVAL: 30,
@@ -27,9 +29,9 @@ module.exports = {
   HUMID_MIN: 75,
   HUMID_MAX: 95,
 
-  PORT: 3000,
+  PORT: parseInt(process.env.PORT, 10) || 3000,
 
-  DB_PATH: path.join(__dirname, 'mushroom.db'),
+  DB_PATH: process.env.DB_PATH || path.join(__dirname, 'mushroom.db'),
 
   ALERT_DEBOUNCE_MS: 5 * 60 * 1000,
   WARNING_MARGIN: 0.05,

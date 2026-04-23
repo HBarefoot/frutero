@@ -41,6 +41,11 @@ function loadLib() {
 }
 
 function init() {
+  if (config.GPIO_STUB) {
+    MOCK = true;
+    console.log('[gpio] GPIO_STUB=true — MOCK mode, relays will NOT switch');
+    return;
+  }
   loadLib();
   if (MOCK) return;
 
