@@ -49,8 +49,26 @@ function attach(server) {
       }
     }
   }, 30000);
+  // Don't let the heartbeat keep the event loop alive during shutdown —
+  // without this, the `server.close()` callback never fires because this
+  // interval is still live, and the 5s safety timeout has .unref().
+  heartbeat.unref();
 
   wss.on('close', () => clearInterval(heartbeat));
+
+  // Also clear heartbeat + drop all client sockets when the underlying
+  // HTTP server closes — WebSocketServer doesn't always propagate this.
+  server.on('close', () => {
+    clearInterval(heartbeat);
+    for (const ws of clients) {
+      try {
+        ws.terminate();
+      } catch {
+        // ignore
+      }
+    }
+    clients.clear();
+  });
 }
 
 function broadcast(event) {
