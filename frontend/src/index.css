@@ -2,20 +2,78 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: dark;
+@layer base {
+  :root {
+    /* Dark-first zinc base + emerald accent. Shadcn-style HSL tokens.      */
+    /* Values as space-separated triplets so Tailwind can apply alpha.      */
+    --background: 222 25% 6%;
+    --foreground: 210 20% 94%;
+
+    --card: 222 24% 9%;
+    --card-foreground: 210 20% 94%;
+
+    --popover: 222 24% 9%;
+    --popover-foreground: 210 20% 94%;
+
+    --primary: 152 72% 42%;           /* emerald-500 */
+    --primary-foreground: 222 25% 6%;
+
+    --secondary: 217 19% 16%;
+    --secondary-foreground: 210 20% 94%;
+
+    --muted: 217 19% 13%;
+    --muted-foreground: 215 16% 62%;
+
+    --accent: 217 19% 16%;
+    --accent-foreground: 210 20% 94%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 20% 94%;
+
+    --border: 217 19% 18%;
+    --input: 217 19% 18%;
+    --ring: 152 72% 42%;
+
+    --success: 152 72% 42%;           /* emerald-500 */
+    --warning: 38 92% 50%;            /* amber-500 */
+    --danger: 0 72% 51%;              /* red-600 */
+    --info: 199 89% 48%;              /* sky-500 */
+
+    --radius: 0.625rem;
+
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv11', 'ss01', 'ss03';
+  }
+
+  /* Thinner, unobtrusive scrollbars */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 6px; }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.4); }
 }
 
-html,
-body,
-#root {
-  height: 100%;
-}
+@layer utilities {
+  .text-success { color: hsl(var(--success)); }
+  .text-warning { color: hsl(var(--warning)); }
+  .text-danger  { color: hsl(var(--danger));  }
+  .text-info    { color: hsl(var(--info));    }
 
-body {
-  font-feature-settings: 'ss01', 'cv01';
-}
+  .bg-success-soft { background-color: hsl(var(--success) / 0.12); }
+  .bg-warning-soft { background-color: hsl(var(--warning) / 0.12); }
+  .bg-danger-soft  { background-color: hsl(var(--danger)  / 0.12); }
+  .bg-info-soft    { background-color: hsl(var(--info)    / 0.12); }
 
-.touch-btn {
-  @apply min-h-[44px] min-w-[44px];
+  .ring-success { --tw-ring-color: hsl(var(--success) / 0.4); }
+  .ring-warning { --tw-ring-color: hsl(var(--warning) / 0.4); }
+  .ring-danger  { --tw-ring-color: hsl(var(--danger)  / 0.4); }
 }

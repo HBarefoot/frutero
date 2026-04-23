@@ -3,22 +3,88 @@ export default {
   content: ['./index.html', './src/**/*.{js,jsx}'],
   darkMode: 'class',
   theme: {
+    container: {
+      center: true,
+      padding: '1rem',
+      screens: { '2xl': '1400px' },
+    },
     extend: {
       colors: {
-        shroom: {
-          bg: '#0b0f14',
-          surface: '#111826',
-          border: '#1f2a3a',
-          accent: '#10b981',
-          warn: '#f59e0b',
-          alert: '#ef4444',
-          light: '#facc15',
+        border: 'hsl(var(--border))',
+        input: 'hsl(var(--input))',
+        ring: 'hsl(var(--ring))',
+        background: 'hsl(var(--background))',
+        foreground: 'hsl(var(--foreground))',
+        primary: {
+          DEFAULT: 'hsl(var(--primary))',
+          foreground: 'hsl(var(--primary-foreground))',
         },
+        secondary: {
+          DEFAULT: 'hsl(var(--secondary))',
+          foreground: 'hsl(var(--secondary-foreground))',
+        },
+        destructive: {
+          DEFAULT: 'hsl(var(--destructive))',
+          foreground: 'hsl(var(--destructive-foreground))',
+        },
+        muted: {
+          DEFAULT: 'hsl(var(--muted))',
+          foreground: 'hsl(var(--muted-foreground))',
+        },
+        accent: {
+          DEFAULT: 'hsl(var(--accent))',
+          foreground: 'hsl(var(--accent-foreground))',
+        },
+        popover: {
+          DEFAULT: 'hsl(var(--popover))',
+          foreground: 'hsl(var(--popover-foreground))',
+        },
+        card: {
+          DEFAULT: 'hsl(var(--card))',
+          foreground: 'hsl(var(--card-foreground))',
+        },
+        // Semantic status colors for sensors/alerts
+        success: 'hsl(var(--success))',
+        warning: 'hsl(var(--warning))',
+        danger: 'hsl(var(--danger))',
+        info: 'hsl(var(--info))',
+      },
+      borderRadius: {
+        lg: 'var(--radius)',
+        md: 'calc(var(--radius) - 2px)',
+        sm: 'calc(var(--radius) - 4px)',
       },
       fontFamily: {
-        sans: ['system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+        sans: [
+          'Inter',
+          'system-ui',
+          '-apple-system',
+          'Segoe UI',
+          'Roboto',
+          'sans-serif',
+        ],
+        mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+      },
+      keyframes: {
+        'accordion-down': {
+          from: { height: '0' },
+          to: { height: 'var(--radix-accordion-content-height)' },
+        },
+        'accordion-up': {
+          from: { height: 'var(--radix-accordion-content-height)' },
+          to: { height: '0' },
+        },
+        'pulse-dot': {
+          '0%, 100%': { opacity: '1', transform: 'scale(1)' },
+          '50%': { opacity: '0.6', transform: 'scale(0.9)' },
+        },
+      },
+      animation: {
+        'accordion-down': 'accordion-down 0.2s ease-out',
+        'accordion-up': 'accordion-up 0.2s ease-out',
+        'pulse-dot': 'pulse-dot 2s ease-in-out infinite',
       },
     },
   },
-  plugins: [],
+  plugins: [require('tailwindcss-animate')],
 };
