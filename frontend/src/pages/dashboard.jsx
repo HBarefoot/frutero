@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -8,9 +8,20 @@ import { DeviceCard } from '@/components/dashboard/device-card';
 import { LiveChart } from '@/components/dashboard/live-chart';
 import { ActivityFeed } from '@/components/dashboard/activity-feed';
 import { useStatus } from '@/lib/status-context';
+import { cn } from '@/lib/cn';
 
 export default function DashboardPage() {
   const { status, alerts, actuators, refresh } = useStatus();
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   const nextFire = useMemo(() => {
     const times = Object.values(status?.nextInvocations || {}).filter(Boolean);
@@ -30,8 +41,8 @@ export default function DashboardPage() {
         title="Dashboard"
         description="Live chamber conditions and device status"
         actions={
-          <Button variant="outline" size="sm" onClick={refresh}>
-            <RefreshCw />
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
+            <RefreshCw className={cn(refreshing && 'animate-spin')} />
             Refresh
           </Button>
         }
