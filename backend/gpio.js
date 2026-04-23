@@ -323,7 +323,7 @@ function getActuator(key) {
   if (!meta) return null;
   return {
     key, kind: meta.kind, name: meta.name,
-    pin: meta.pin, inverted: meta.inverted, enabled: meta.enabled,
+    gpio_pin: meta.pin, inverted: meta.inverted, enabled: meta.enabled,
     auto_off_seconds: meta.auto_off_seconds, config: meta.config,
     state: !!state.get(key), manualOverride: !!manualOverride.get(key),
   };
