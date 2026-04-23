@@ -486,49 +486,55 @@ function GpioMapCard({ scan }) {
 
 function I2CCard({ scan }) {
   const i2c = scan?.i2c;
+  const buses = i2c?.buses || [];
+  const totalDevices = buses.reduce((n, b) => n + (b.devices?.length || 0), 0);
+  const caption = !i2c
+    ? 'Scanning…'
+    : buses.length === 0
+      ? 'user bus not enabled'
+      : totalDevices === 0
+        ? `${buses.length} bus${buses.length === 1 ? '' : 'es'} · 0 sensors`
+        : `${totalDevices} sensor${totalDevices === 1 ? '' : 's'} on ${buses.length} bus${buses.length === 1 ? '' : 'es'}`;
   return (
     <Card>
       <CardHeader>
         <CardTitleGroup>
           <div className="flex items-center gap-2">
             <Cable className="size-4 text-muted-foreground" />
-            <CardTitle>I²C devices</CardTitle>
+            <CardTitle>I²C sensors</CardTitle>
           </div>
-          <CardDescription>Auto-detected sensors on each I²C bus</CardDescription>
+          <CardDescription>{caption}</CardDescription>
         </CardTitleGroup>
       </CardHeader>
-      <CardContent className="pt-0">
-        {!i2c ? (
-          <Loading />
-        ) : i2c.buses.length === 0 ? (
-          <Empty text="No I²C buses found. Enable I²C via raspi-config or add `dtparam=i2c_arm=on` to /boot/firmware/config.txt." />
-        ) : (
-          <div className="space-y-3">
-            {i2c.buses.map((b) => (
-              <div key={b.path} className="rounded-md border border-border bg-background/40 p-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs">{b.path}</span>
-                  <Badge variant="muted">bus {b.bus}</Badge>
+      {i2c && buses.length > 0 && totalDevices > 0 && (
+        <CardContent className="pt-0">
+          <div className="space-y-2">
+            {buses.filter((b) => (b.devices?.length || 0) > 0).map((b) => (
+              <div key={b.path} className="rounded-md border border-border bg-background/40 p-2">
+                <div className="mb-1 text-[10px] font-mono uppercase tracking-wide text-muted-foreground">
+                  {b.path}
                 </div>
-                {b.error ? (
-                  <div className="mt-2 text-xs text-warning">{b.error}</div>
-                ) : b.devices.length === 0 ? (
-                  <div className="mt-2 text-xs text-muted-foreground">no devices detected</div>
-                ) : (
-                  <ul className="mt-2 space-y-1 text-xs">
-                    {b.devices.map((d) => (
-                      <li key={d.addr} className="flex items-center justify-between gap-2">
-                        <span className="font-mono">{d.hex}</span>
-                        <span className="truncate text-muted-foreground">{d.candidates.join(' / ')}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <ul className="space-y-1 text-xs">
+                  {b.devices.map((d) => (
+                    <li key={d.addr} className="flex items-center justify-between gap-2">
+                      <span className="font-mono">{d.hex}</span>
+                      <span className="truncate text-muted-foreground">{d.candidates.join(' / ')}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             ))}
           </div>
-        )}
-      </CardContent>
+        </CardContent>
+      )}
+      {i2c && buses.length === 0 && i2c.hint && (
+        <CardContent className="pt-0">
+          <details className="text-[11px] text-muted-foreground">
+            <summary className="cursor-pointer hover:text-foreground">How to enable</summary>
+            <p className="mt-2 leading-relaxed">{i2c.hint}</p>
+          </details>
+        </CardContent>
+      )}
     </Card>
   );
 }
@@ -537,6 +543,7 @@ function I2CCard({ scan }) {
 
 function OneWireCard({ scan }) {
   const w = scan?.oneWire;
+  const count = w?.devices?.length ?? 0;
   return (
     <Card>
       <CardHeader>
@@ -545,17 +552,13 @@ function OneWireCard({ scan }) {
             <Thermometer className="size-4 text-muted-foreground" />
             <CardTitle>1-Wire</CardTitle>
           </div>
-          <CardDescription>DS18B20 / temperature probes</CardDescription>
+          <CardDescription>
+            {!w ? 'Scanning…' : !w.enabled ? 'not enabled' : `${count} probe${count === 1 ? '' : 's'}`}
+          </CardDescription>
         </CardTitleGroup>
       </CardHeader>
-      <CardContent className="pt-0">
-        {!w ? (
-          <Loading />
-        ) : !w.enabled ? (
-          <Empty text={w.hint || '1-Wire bus not enabled.'} />
-        ) : w.devices.length === 0 ? (
-          <Empty text="1-Wire enabled but no devices detected." />
-        ) : (
+      {w && (w.enabled && count > 0) && (
+        <CardContent className="pt-0">
           <ul className="space-y-1 text-xs">
             {w.devices.map((d) => (
               <li key={d.id} className="flex items-center justify-between rounded-md border border-border bg-background/40 px-3 py-2">
@@ -564,8 +567,16 @@ function OneWireCard({ scan }) {
               </li>
             ))}
           </ul>
-        )}
-      </CardContent>
+        </CardContent>
+      )}
+      {w && !w.enabled && w.hint && (
+        <CardContent className="pt-0">
+          <details className="text-[11px] text-muted-foreground">
+            <summary className="cursor-pointer hover:text-foreground">How to enable</summary>
+            <p className="mt-2 leading-relaxed">{w.hint}</p>
+          </details>
+        </CardContent>
+      )}
     </Card>
   );
 }
@@ -574,42 +585,43 @@ function OneWireCard({ scan }) {
 
 function VideoCard({ scan }) {
   const v = scan?.video;
+  const all = v?.devices || [];
+  const usable = all.filter((d) => d.usable);
+  const hiddenCount = all.length - usable.length;
   return (
     <Card>
       <CardHeader>
         <CardTitleGroup>
           <div className="flex items-center gap-2">
             <Camera className="size-4 text-muted-foreground" />
-            <CardTitle>Video devices</CardTitle>
+            <CardTitle>Cameras</CardTitle>
           </div>
-          <CardDescription>USB cameras and CSI/ISP nodes</CardDescription>
+          <CardDescription>
+            {!v
+              ? 'Scanning…'
+              : usable.length === 0
+                ? 'no USB camera plugged in'
+                : `${usable.length} usable${hiddenCount ? ` · ${hiddenCount} platform node${hiddenCount === 1 ? '' : 's'} hidden` : ''}`}
+          </CardDescription>
         </CardTitleGroup>
       </CardHeader>
-      <CardContent className="pt-0">
-        {!v ? (
-          <Loading />
-        ) : v.devices.length === 0 ? (
-          <Empty text="No /dev/video* nodes found. Plug in a USB camera." />
-        ) : (
+      {v && usable.length > 0 && (
+        <CardContent className="pt-0">
           <ul className="space-y-1 text-xs">
-            {v.devices.map((d) => (
+            {usable.map((d) => (
               <li
                 key={d.path}
-                className={cn(
-                  'flex items-center justify-between rounded-md border bg-background/40 px-3 py-2',
-                  d.usable ? 'border-success/30' : 'border-border'
-                )}
+                className="flex items-center justify-between rounded-md border border-success/30 bg-background/40 px-3 py-2"
               >
                 <span className="font-mono">{d.path}</span>
                 <span className="truncate text-muted-foreground">
-                  {d.card || d.driver || d.error || 'unknown'}
+                  {d.card || d.driver || 'unknown'}
                 </span>
-                {d.usable && <Badge variant="success" className="ml-2">usable</Badge>}
               </li>
             ))}
           </ul>
-        )}
-      </CardContent>
+        </CardContent>
+      )}
     </Card>
   );
 }

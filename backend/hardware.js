@@ -39,18 +39,26 @@ const ALL_GPIO_PINS = [
 
 // ---------------- I²C ----------------
 
+// On Raspberry Pi, only /dev/i2c-1 is the canonical "user" bus exposed by
+// `dtparam=i2c_arm=on`. Higher-numbered buses (10+) are internal — most
+// notably /dev/i2c-20/21 are HDMI DDC, which respond to every probed
+// address and would dump ~100 bogus "devices" into the UI. We only scan
+// bus 0/1 by default; anything else is quietly excluded with a hint.
 function listI2cBuses() {
   let entries;
   try { entries = fs.readdirSync('/dev'); }
   catch { return []; }
-  return entries
+  const all = entries
     .filter((n) => /^i2c-\d+$/.test(n))
-    .map((n) => ({
-      path: `/dev/${n}`,
-      bus: parseInt(n.slice(4), 10),
-    }))
+    .map((n) => ({ path: `/dev/${n}`, bus: parseInt(n.slice(4), 10) }))
     .sort((a, b) => a.bus - b.bus);
+  return all.filter((b) => b.bus <= 1);
 }
+
+// A real user I²C bus has at most a handful of devices. If more than this
+// many addresses come back, the bus is reflective (HDMI DDC or similar)
+// and we should treat the scan result as noise.
+const I2C_NOISE_THRESHOLD = 32;
 
 function detectI2cAddresses(busNumber) {
   // Returns list of detected 7-bit addresses on a bus, or null if i2cdetect
@@ -87,10 +95,23 @@ function parseI2cdetectOutput(text) {
 function scanI2C() {
   // Read-only probe — safe to run regardless of GPIO_STUB.
   const buses = listI2cBuses();
+  const hint = buses.length === 0
+    ? 'No user I²C bus found. Enable with `dtparam=i2c_arm=on` in /boot/firmware/config.txt and reboot.'
+    : null;
+
   const result = buses.map((b) => {
     const detect = detectI2cAddresses(b.bus);
     if (detect && typeof detect === 'object' && 'error' in detect) {
       return { ...b, error: detect.error, devices: [] };
+    }
+    // Guard against reflective buses (HDMI DDC etc): if the scan returned
+    // an impossible number of devices, drop them with an explanatory note.
+    if (detect.length > I2C_NOISE_THRESHOLD) {
+      return {
+        ...b,
+        devices: [],
+        note: `Bus returned ${detect.length} addresses — looks like a reflective bus (HDMI DDC?), ignored.`,
+      };
     }
     return {
       ...b,
@@ -101,7 +122,7 @@ function scanI2C() {
       })),
     };
   });
-  return { stub: false, buses: result };
+  return { stub: false, buses: result, hint };
 }
 
 // ---------------- 1-Wire ----------------
