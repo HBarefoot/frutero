@@ -17,8 +17,6 @@ export function StatusProvider({ children }) {
       setAlerts(a);
       setSettings(st);
     } catch (err) {
-      // Swallow — errors render as stale state in the UI. Real error
-      // surfacing comes with the toast system in a later phase.
       console.error('status refresh failed', err);
     }
   }, []);
@@ -29,23 +27,23 @@ export function StatusProvider({ children }) {
 
   const handleMessage = useCallback((msg) => {
     if (msg.type === 'device_change') {
-      setStatus((prev) =>
-        prev
-          ? {
-              ...prev,
-              [msg.data.device]: msg.data.state,
-              manualOverride: {
-                ...prev.manualOverride,
-                [msg.data.device]:
-                  msg.data.trigger === 'api' || msg.data.trigger === 'manual'
-                    ? true
-                    : msg.data.trigger === 'schedule'
-                    ? false
-                    : prev.manualOverride?.[msg.data.device],
-              },
-            }
-          : prev
-      );
+      const { device, state, trigger } = msg.data;
+      setStatus((prev) => {
+        if (!prev?.actuators?.[device]) return prev;
+        const overrideNext =
+          trigger === 'api' || trigger === 'manual'
+            ? true
+            : trigger === 'schedule' || trigger === 'clear-override'
+            ? false
+            : prev.actuators[device].manualOverride;
+        return {
+          ...prev,
+          actuators: {
+            ...prev.actuators,
+            [device]: { ...prev.actuators[device], state, manualOverride: overrideNext },
+          },
+        };
+      });
     } else if (msg.type === 'sensor_reading') {
       setStatus((prev) => (prev ? { ...prev, sensor: msg.data } : prev));
     } else if (msg.type === 'alert') {
@@ -62,6 +60,7 @@ export function StatusProvider({ children }) {
   const value = useMemo(
     () => ({
       status,
+      actuators: status?.actuators || {},
       alerts,
       settings,
       recentAlert,

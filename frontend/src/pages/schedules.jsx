@@ -22,6 +22,7 @@ import {
   updateSchedule,
 } from '@/lib/api';
 import { useStatus } from '@/lib/status-context';
+import { useAuth } from '@/lib/auth-context';
 import { cn } from '@/lib/cn';
 
 const PRESETS = [
@@ -47,15 +48,24 @@ const PRESETS = [
 ];
 
 export default function SchedulesPage() {
-  const { refresh } = useStatus();
+  const { refresh, actuators } = useStatus();
+  const { can } = useAuth();
+  const readOnly = !can('mutate');
+  const actuatorList = Object.values(actuators);
   const [rows, setRows] = useState([]);
   const [form, setForm] = useState({
-    device: 'fan',
+    device: actuatorList[0]?.key || 'fan',
     action: 'on',
     cron_expression: '*/30 * * * *',
     label: '',
   });
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!form.device && actuatorList[0]) {
+      setForm((f) => ({ ...f, device: actuatorList[0].key }));
+    }
+  }, [actuatorList, form.device]);
 
   async function reload() {
     try {
@@ -135,6 +145,8 @@ export default function SchedulesPage() {
                   <ScheduleRow
                     key={row.id}
                     row={row}
+                    orphan={!actuators[row.device]}
+                    readOnly={readOnly}
                     onToggle={() => onToggle(row)}
                     onDelete={() => onDelete(row)}
                   />
@@ -144,136 +156,151 @@ export default function SchedulesPage() {
           </CardContent>
         </Card>
 
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitleGroup>
-                <CardTitle>Add schedule</CardTitle>
-                <CardDescription>Custom cron expression</CardDescription>
-              </CardTitleGroup>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={onAdd} className="space-y-3">
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label htmlFor="sched-device">Device</Label>
-                    <SelectNative
-                      id="sched-device"
-                      value={form.device}
-                      onChange={(e) => setForm({ ...form, device: e.target.value })}
-                      className="mt-1.5"
-                    >
-                      <option value="fan">Fan</option>
-                      <option value="light">Light</option>
-                    </SelectNative>
+        {!readOnly && (
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitleGroup>
+                  <CardTitle>Add schedule</CardTitle>
+                  <CardDescription>Custom cron expression</CardDescription>
+                </CardTitleGroup>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={onAdd} className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label htmlFor="sched-device">Device</Label>
+                      <SelectNative
+                        id="sched-device"
+                        value={form.device}
+                        onChange={(e) => setForm({ ...form, device: e.target.value })}
+                        className="mt-1.5"
+                      >
+                        {actuatorList.length === 0 && <option value="">— none —</option>}
+                        {actuatorList.map((a) => (
+                          <option key={a.key} value={a.key}>{a.name}</option>
+                        ))}
+                      </SelectNative>
+                    </div>
+                    <div>
+                      <Label htmlFor="sched-action">Action</Label>
+                      <SelectNative
+                        id="sched-action"
+                        value={form.action}
+                        onChange={(e) => setForm({ ...form, action: e.target.value })}
+                        className="mt-1.5"
+                      >
+                        <option value="on">ON</option>
+                        <option value="off">OFF</option>
+                      </SelectNative>
+                    </div>
                   </div>
                   <div>
-                    <Label htmlFor="sched-action">Action</Label>
-                    <SelectNative
-                      id="sched-action"
-                      value={form.action}
-                      onChange={(e) => setForm({ ...form, action: e.target.value })}
-                      className="mt-1.5"
-                    >
-                      <option value="on">ON</option>
-                      <option value="off">OFF</option>
-                    </SelectNative>
+                    <Label htmlFor="sched-cron">Cron expression</Label>
+                    <Input
+                      id="sched-cron"
+                      placeholder="0 6 * * *"
+                      value={form.cron_expression}
+                      onChange={(e) => setForm({ ...form, cron_expression: e.target.value })}
+                      className="mt-1.5 font-mono"
+                      required
+                    />
                   </div>
-                </div>
-                <div>
-                  <Label htmlFor="sched-cron">Cron expression</Label>
-                  <Input
-                    id="sched-cron"
-                    placeholder="0 6 * * *"
-                    value={form.cron_expression}
-                    onChange={(e) => setForm({ ...form, cron_expression: e.target.value })}
-                    className="mt-1.5 font-mono"
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="sched-label">Label</Label>
-                  <Input
-                    id="sched-label"
-                    placeholder="optional"
-                    value={form.label}
-                    onChange={(e) => setForm({ ...form, label: e.target.value })}
-                    className="mt-1.5"
-                  />
-                </div>
-                <Button type="submit" disabled={busy} className="w-full">
-                  <Plus />
-                  Add schedule
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
+                  <div>
+                    <Label htmlFor="sched-label">Label</Label>
+                    <Input
+                      id="sched-label"
+                      placeholder="optional"
+                      value={form.label}
+                      onChange={(e) => setForm({ ...form, label: e.target.value })}
+                      className="mt-1.5"
+                    />
+                  </div>
+                  <Button type="submit" disabled={busy} className="w-full">
+                    <Plus />
+                    Add schedule
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitleGroup>
-                <div className="flex items-center gap-2">
-                  <Sparkles className="size-4 text-muted-foreground" />
-                  <CardTitle>Quick presets</CardTitle>
-                </div>
-                <CardDescription>One-click schedule bundles</CardDescription>
-              </CardTitleGroup>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {PRESETS.map((p) => (
-                <Button
-                  key={p.label}
-                  variant="outline"
-                  className="w-full justify-start"
-                  onClick={() => applyPreset(p)}
-                  disabled={busy}
-                >
-                  <Plus />
-                  {p.label}
-                </Button>
-              ))}
-            </CardContent>
-          </Card>
-        </div>
+            <Card>
+              <CardHeader>
+                <CardTitleGroup>
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="size-4 text-muted-foreground" />
+                    <CardTitle>Quick presets</CardTitle>
+                  </div>
+                  <CardDescription>One-click schedule bundles</CardDescription>
+                </CardTitleGroup>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {PRESETS.map((p) => (
+                  <Button
+                    key={p.label}
+                    variant="outline"
+                    className="w-full justify-start"
+                    onClick={() => applyPreset(p)}
+                    disabled={busy}
+                  >
+                    <Plus />
+                    {p.label}
+                  </Button>
+                ))}
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </div>
     </>
   );
 }
 
-function ScheduleRow({ row, onToggle, onDelete }) {
+const DEVICE_BADGE = { fan: 'info', light: 'warning', mister: 'info', humidifier: 'info', heater: 'warning' };
+function badgeForDevice(device) {
+  return DEVICE_BADGE[device] || 'muted';
+}
+
+function ScheduleRow({ row, orphan, readOnly, onToggle, onDelete }) {
   return (
     <li className="flex items-center justify-between gap-3 py-3">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <Badge
-            variant={row.device === 'fan' ? 'info' : 'warning'}
-            className="uppercase"
-          >
+          <Badge variant={badgeForDevice(row.device)} className="uppercase">
             {row.device} {row.action}
           </Badge>
+          {orphan && (
+            <Badge variant="danger" title="Referenced actuator no longer exists — this schedule will skip at fire time.">
+              orphan
+            </Badge>
+          )}
           <span className={cn('truncate', row.enabled ? 'text-foreground' : 'text-muted-foreground line-through')}>
             {row.label || row.cron_expression}
           </span>
         </div>
         <div className="mt-1 font-mono text-xs text-muted-foreground">
           {row.cron_expression}
+          {orphan && <span className="ml-2 text-danger">· actuator '{row.device}' missing</span>}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <Switch
           checked={!!row.enabled}
           onCheckedChange={onToggle}
+          disabled={readOnly}
           aria-label="Toggle schedule"
         />
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onDelete}
-          aria-label="Delete schedule"
-          className="text-muted-foreground hover:bg-danger/10 hover:text-danger"
-        >
-          <Trash2 />
-        </Button>
+        {!readOnly && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onDelete}
+            aria-label="Delete schedule"
+            className="text-muted-foreground hover:bg-danger/10 hover:text-danger"
+          >
+            <Trash2 />
+          </Button>
+        )}
       </div>
     </li>
   );

@@ -34,6 +34,20 @@ export async function acceptInvite(token, { name, password }) {
   ).data;
 }
 
+// --- Self-service account -------------------------------------------
+export async function updateMyName(name) {
+  return (await api.patch('/auth/me', { name })).data;
+}
+export async function changeMyPassword({ current_password, new_password }) {
+  return (await api.post('/auth/me/password', { current_password, new_password })).data;
+}
+export async function fetchMySessions() {
+  return (await api.get('/auth/me/sessions')).data;
+}
+export async function revokeMyOtherSessions() {
+  return (await api.post('/auth/me/revoke-others')).data;
+}
+
 // --- Users (owner-only) ---------------------------------------------
 export async function fetchUsers() {
   return (await api.get('/users')).data;
@@ -49,6 +63,15 @@ export async function deleteUserRequest(id) {
 }
 export async function revokeUserSessions(id) {
   return (await api.post(`/users/${id}/revoke-sessions`)).data;
+}
+export async function issuePasswordReset(id) {
+  return (await api.post(`/users/${id}/password-reset`)).data;
+}
+export async function inspectReset(token) {
+  return (await api.get(`/auth/reset/${encodeURIComponent(token)}`)).data;
+}
+export async function submitReset(token, new_password) {
+  return (await api.post(`/auth/reset/${encodeURIComponent(token)}`, { new_password })).data;
 }
 export async function fetchInvites() {
   return (await api.get('/invites')).data;
@@ -67,20 +90,66 @@ export async function fetchStatus() {
   return (await api.get('/status')).data;
 }
 
-export async function setFan(state) {
-  return (await api.post('/fan', { state })).data;
+export async function setDevice(key, state) {
+  return (await api.post(`/devices/${encodeURIComponent(key)}`, { state })).data;
 }
 
-export async function setLight(state) {
-  return (await api.post('/light', { state })).data;
-}
+export async function setFan(state) { return setDevice('fan', state); }
+export async function setLight(state) { return setDevice('light', state); }
 
-export async function clearOverride(device) {
-  return (await api.post(`/${device}/clear-override`)).data;
+export async function clearOverride(key) {
+  return (await api.post(`/devices/${encodeURIComponent(key)}/clear-override`)).data;
 }
 
 export async function runTest(device, duration) {
   return (await api.post('/test', { device, duration })).data;
+}
+
+// --- Actuators ------------------------------------------------------
+export async function fetchActuators() {
+  return (await api.get('/actuators')).data;
+}
+export async function createActuator(payload) {
+  return (await api.post('/actuators', payload)).data;
+}
+export async function updateActuator(key, payload) {
+  return (await api.put(`/actuators/${encodeURIComponent(key)}`, payload)).data;
+}
+export async function deleteActuator(key) {
+  return (await api.delete(`/actuators/${encodeURIComponent(key)}`)).data;
+}
+export async function pulseActuator(key, ms = 1000) {
+  return (await api.post(`/actuators/${encodeURIComponent(key)}/test`, { ms })).data;
+}
+
+// --- Misting --------------------------------------------------------
+export async function fetchMistingStatus() {
+  return (await api.get('/misting')).data;
+}
+export async function saveMistingConfig(payload) {
+  return (await api.put('/misting', payload)).data;
+}
+
+// --- Camera ---------------------------------------------------------
+export async function fetchCameraStatus() {
+  return (await api.get('/camera')).data;
+}
+export async function saveCameraConfig(payload) {
+  return (await api.put('/camera', payload)).data;
+}
+export const cameraSnapshotUrl = (cacheBust = false) =>
+  `/api/camera/snapshot${cacheBust ? `?t=${Date.now()}` : ''}`;
+export const cameraStreamUrl = () => `/api/camera/stream`;
+
+// --- Hardware (owner-only) -----------------------------------------
+export async function fetchHardwareScan() {
+  return (await api.get('/hardware/scan')).data;
+}
+export async function fetchSetupHardwareScan() {
+  return (await api.get('/setup/hardware-scan')).data;
+}
+export async function fetchHardwareGpio() {
+  return (await api.get('/hardware/gpio')).data;
 }
 
 export async function fetchReadings(hours = 24) {
@@ -117,6 +186,16 @@ export async function fetchAlerts() {
 
 export async function saveAlerts(payload) {
   return (await api.put('/alerts', payload)).data;
+}
+
+export async function fetchTelegramConfig() {
+  return (await api.get('/alerts/telegram')).data;
+}
+export async function saveTelegramConfig(payload) {
+  return (await api.put('/alerts/telegram', payload)).data;
+}
+export async function testTelegram() {
+  return (await api.post('/alerts/telegram/test')).data;
 }
 
 export async function fetchSettings() {

@@ -108,6 +108,34 @@ function init() {
 
     CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
     CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
+
+    -- Owner-issued password reset tokens. Single-use, 72h TTL, consumed
+    -- when the user sets a new password via /reset/:token.
+    CREATE TABLE IF NOT EXISTS password_resets (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      issued_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      expires_at DATETIME NOT NULL,
+      used_at DATETIME
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
+
+    -- Generic actuator registry. Replaces hardcoded fan/light pin config.
+    -- key is referenced by schedules.device and device_log.device.
+    CREATE TABLE IF NOT EXISTS actuators (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      gpio_pin INTEGER NOT NULL,
+      inverted INTEGER NOT NULL DEFAULT 0,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      auto_off_seconds INTEGER,
+      config TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Additive migration: add user_id to device_log for attribution on
@@ -115,6 +143,7 @@ function init() {
   ensureColumn('device_log', 'user_id', 'INTEGER REFERENCES users(id)');
 
   seedIfEmpty();
+  seedActuatorsIfEmpty();
 }
 
 function ensureColumn(table, col, type) {
@@ -151,6 +180,22 @@ function seedIfEmpty() {
   putSetting.run('fan_cycle_interval', String(config.FAN_CYCLE_INTERVAL));
   putSetting.run('species', '');
   putSetting.run('seeded', '1');
+}
+
+// Seeds default actuators (fan, light) so an upgraded install with an empty
+// actuators table behaves identically to the pre-Phase-3 hardcoded behavior.
+// Runs whenever the table is empty (not gated on the 'seeded' flag), so
+// existing prod installs get their defaults on first restart with new code.
+function seedActuatorsIfEmpty() {
+  const n = db.prepare('SELECT COUNT(*) AS n FROM actuators').get().n;
+  if (n > 0) return;
+
+  const insert = db.prepare(
+    `INSERT INTO actuators (key, name, kind, gpio_pin, inverted, enabled, auto_off_seconds)
+     VALUES (?, ?, ?, ?, ?, 1, ?)`
+  );
+  insert.run('fan', 'Fans', 'fan', config.FAN_PIN, config.FAN_INVERTED ? 1 : 0, config.FAN_ON_DURATION);
+  insert.run('light', 'Grow Lights', 'light', config.LIGHT_PIN, config.LIGHT_INVERTED ? 1 : 0, null);
 }
 
 function getDb() {
@@ -370,6 +415,12 @@ const Q = {
       .run(password_hash, id);
   },
 
+  updateUserName(id, name) {
+    return getDb()
+      .prepare('UPDATE users SET name = ? WHERE id = ?')
+      .run(name, id);
+  },
+
   updateUserDisabled(id, disabled) {
     return getDb()
       .prepare('UPDATE users SET disabled = ? WHERE id = ?')
@@ -426,6 +477,21 @@ const Q = {
     return getDb().prepare('DELETE FROM sessions WHERE user_id = ?').run(user_id);
   },
 
+  listSessionsForUser(user_id) {
+    return getDb()
+      .prepare(
+        `SELECT token, created_at, expires_at, last_seen_at, ip, user_agent
+         FROM sessions WHERE user_id = ? ORDER BY last_seen_at DESC`
+      )
+      .all(user_id);
+  },
+
+  deleteSessionsForUserExcept(user_id, keepToken) {
+    return getDb()
+      .prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?')
+      .run(user_id, keepToken);
+  },
+
   pruneExpiredSessions() {
     return getDb()
       .prepare('DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP')
@@ -477,6 +543,44 @@ const Q = {
     return getDb().prepare('DELETE FROM invites WHERE token = ?').run(token);
   },
 
+  // Password resets -------------------------------------------------
+  insertPasswordReset({ token, user_id, issued_by, expires_at }) {
+    return getDb()
+      .prepare(
+        'INSERT INTO password_resets (token, user_id, issued_by, expires_at) VALUES (?, ?, ?, ?)'
+      )
+      .run(token, user_id, issued_by, expires_at);
+  },
+
+  /** Reset is valid iff not used and not expired. */
+  findPendingReset(token) {
+    return getDb()
+      .prepare(
+        `SELECT pr.token, pr.user_id, pr.expires_at,
+                u.email, u.name
+         FROM password_resets pr
+         JOIN users u ON u.id = pr.user_id
+         WHERE pr.token = ?
+           AND pr.used_at IS NULL
+           AND pr.expires_at > CURRENT_TIMESTAMP
+           AND u.disabled = 0`
+      )
+      .get(token);
+  },
+
+  markResetUsed(token) {
+    return getDb()
+      .prepare('UPDATE password_resets SET used_at = CURRENT_TIMESTAMP WHERE token = ?')
+      .run(token);
+  },
+
+  /** Invalidate every outstanding reset for a user (call on password change). */
+  deleteResetsForUser(user_id) {
+    return getDb()
+      .prepare('DELETE FROM password_resets WHERE user_id = ?')
+      .run(user_id);
+  },
+
   // Audit log --------------------------------------------------------
   insertAudit({ user_id, action, target, detail, ip }) {
     return getDb()
@@ -490,6 +594,84 @@ const Q = {
         detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : null,
         ip || null
       );
+  },
+
+  // Actuators -------------------------------------------------------
+  listActuators() {
+    return getDb()
+      .prepare(
+        `SELECT id, key, name, kind, gpio_pin, inverted, enabled,
+                auto_off_seconds, config, created_at
+         FROM actuators ORDER BY id ASC`
+      )
+      .all();
+  },
+
+  findActuator(key) {
+    return getDb()
+      .prepare(
+        `SELECT id, key, name, kind, gpio_pin, inverted, enabled,
+                auto_off_seconds, config, created_at
+         FROM actuators WHERE key = ?`
+      )
+      .get(key);
+  },
+
+  findActuatorByPin(gpio_pin) {
+    return getDb()
+      .prepare('SELECT key, name FROM actuators WHERE gpio_pin = ?')
+      .get(gpio_pin);
+  },
+
+  insertActuator({ key, name, kind, gpio_pin, inverted, enabled, auto_off_seconds, config }) {
+    return getDb()
+      .prepare(
+        `INSERT INTO actuators (key, name, kind, gpio_pin, inverted, enabled, auto_off_seconds, config)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        key,
+        name,
+        kind,
+        gpio_pin,
+        inverted ? 1 : 0,
+        enabled === false ? 0 : 1,
+        auto_off_seconds == null ? null : Number(auto_off_seconds),
+        config ? (typeof config === 'string' ? config : JSON.stringify(config)) : null
+      );
+  },
+
+  updateActuator(key, fields) {
+    const sets = [];
+    const vals = [];
+    if (fields.name !== undefined) { sets.push('name = ?'); vals.push(fields.name); }
+    if (fields.kind !== undefined) { sets.push('kind = ?'); vals.push(fields.kind); }
+    if (fields.gpio_pin !== undefined) { sets.push('gpio_pin = ?'); vals.push(Number(fields.gpio_pin)); }
+    if (fields.inverted !== undefined) { sets.push('inverted = ?'); vals.push(fields.inverted ? 1 : 0); }
+    if (fields.enabled !== undefined) { sets.push('enabled = ?'); vals.push(fields.enabled ? 1 : 0); }
+    if (fields.auto_off_seconds !== undefined) {
+      sets.push('auto_off_seconds = ?');
+      vals.push(fields.auto_off_seconds == null ? null : Number(fields.auto_off_seconds));
+    }
+    if (fields.config !== undefined) {
+      sets.push('config = ?');
+      vals.push(fields.config == null ? null : (typeof fields.config === 'string' ? fields.config : JSON.stringify(fields.config)));
+    }
+    if (sets.length === 0) return { changes: 0 };
+    vals.push(key);
+    return getDb()
+      .prepare(`UPDATE actuators SET ${sets.join(', ')} WHERE key = ?`)
+      .run(...vals);
+  },
+
+  deleteActuator(key) {
+    return getDb().prepare('DELETE FROM actuators WHERE key = ?').run(key);
+  },
+
+  countSchedulesForDevice(device) {
+    return getDb()
+      .prepare('SELECT COUNT(*) AS n FROM schedules WHERE device = ?')
+      .get(device).n;
   },
 
   listAudit(limit = 100) {

@@ -1,8 +1,21 @@
 const express = require('express');
 const auth = require('../auth');
+const hardware = require('../hardware');
 const { Q } = require('../database');
 
 const router = express.Router();
+
+// First-run-only hardware scan — lets the setup wizard show what the Pi
+// detected before any owner account exists. Locks itself after the first
+// user is created (requireFirstRun returns 409 from then on).
+router.get('/setup/hardware-scan', auth.requireFirstRun, (_req, res) => {
+  try {
+    res.json(hardware.scanAll());
+  } catch (err) {
+    console.error('[setup] hardware scan failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 /**
  * Returns basic setup state so the unauthenticated frontend knows which
@@ -158,6 +171,109 @@ router.post('/auth/invite/:token/accept', async (req, res) => {
     console.error('[auth] accept invite failed:', err);
     res.status(500).json({ error: 'accept_failed' });
   }
+});
+
+// --- Password reset (unauthenticated flow) ----------------------------
+
+/** Preview a reset link — returns the email the reset was issued for. */
+router.get('/auth/reset/:token', (req, res) => {
+  const row = Q.findPendingReset(req.params.token);
+  if (!row) return res.status(404).json({ error: 'invalid_or_expired' });
+  res.json({ email: row.email, name: row.name, expires_at: row.expires_at });
+});
+
+router.post('/auth/reset/:token', async (req, res) => {
+  const row = Q.findPendingReset(req.params.token);
+  if (!row) return res.status(404).json({ error: 'invalid_or_expired' });
+
+  const { new_password } = req.body || {};
+  const pwErr = auth.validatePassword(new_password);
+  if (pwErr) return res.status(400).json({ error: pwErr });
+
+  try {
+    const hash = await auth.hashPassword(new_password);
+    Q.updateUserPassword(row.user_id, hash);
+    Q.markResetUsed(row.token);
+    // Invalidate all outstanding resets + active sessions so the only way
+    // in is with the new password.
+    Q.deleteResetsForUser(row.user_id);
+    Q.deleteSessionsForUser(row.user_id);
+
+    // Issue a fresh session so the user lands inside immediately.
+    const user = Q.findUserById(row.user_id);
+    const { token } = auth.createSession(user, req);
+    auth.setSessionCookie(res, token, req.protocol === 'https');
+    req.user = { id: user.id, email: user.email, name: user.name, role: user.role };
+    auth.logAudit(req, 'auth.reset_password', `user:${user.id}`, {
+      reset_token: row.token.slice(0, 8),
+    });
+    res.status(200).json({ user: req.user });
+  } catch (err) {
+    console.error('[auth] reset failed:', err);
+    res.status(500).json({ error: 'reset_failed' });
+  }
+});
+
+// --- Self-service account management ----------------------------------
+// These routes are mounted under /api (with auth routes) before the global
+// requireAuth gate, so each explicitly requires authentication.
+
+router.patch('/auth/me', auth.requireAuth, (req, res) => {
+  const { name } = req.body || {};
+  if (typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'invalid_name' });
+  }
+  Q.updateUserName(req.user.id, name.trim());
+  auth.logAudit(req, 'auth.update_name', `user:${req.user.id}`, { name: name.trim() });
+  const updated = Q.findUserById(req.user.id);
+  res.json({ user: { id: updated.id, email: updated.email, name: updated.name, role: updated.role } });
+});
+
+router.post('/auth/me/password', auth.requireAuth, async (req, res) => {
+  const { current_password, new_password } = req.body || {};
+  const pwErr = auth.validatePassword(new_password);
+  if (pwErr) return res.status(400).json({ error: pwErr });
+  if (typeof current_password !== 'string') {
+    return res.status(400).json({ error: 'current_password required' });
+  }
+
+  const row = Q.findUserByEmail(req.user.email);
+  if (!row) return res.status(404).json({ error: 'not_found' });
+  const ok = await auth.verifyPassword(current_password, row.password_hash);
+  if (!ok) {
+    auth.logAudit(req, 'auth.change_password_fail', `user:${req.user.id}`, null);
+    return res.status(401).json({ error: 'wrong_password' });
+  }
+
+  const hash = await auth.hashPassword(new_password);
+  Q.updateUserPassword(req.user.id, hash);
+  // Invalidate all sessions except the current one — changing the password
+  // should log out every other device.
+  if (req.sessionToken) {
+    Q.deleteSessionsForUserExcept(req.user.id, req.sessionToken);
+  }
+  auth.logAudit(req, 'auth.change_password', `user:${req.user.id}`, null);
+  res.json({ ok: true });
+});
+
+router.get('/auth/me/sessions', auth.requireAuth, (req, res) => {
+  const rows = Q.listSessionsForUser(req.user.id).map((s) => ({
+    token_preview: s.token.slice(0, 8),
+    is_current: s.token === req.sessionToken,
+    created_at: s.created_at,
+    expires_at: s.expires_at,
+    last_seen_at: s.last_seen_at,
+    ip: s.ip,
+    user_agent: s.user_agent,
+  }));
+  res.json({ sessions: rows });
+});
+
+router.post('/auth/me/revoke-others', auth.requireAuth, (req, res) => {
+  if (!req.sessionToken) return res.status(400).json({ error: 'no_current_session' });
+  const info = Q.deleteSessionsForUserExcept(req.user.id, req.sessionToken);
+  auth.logAudit(req, 'auth.revoke_other_sessions', `user:${req.user.id}`, { revoked: info.changes });
+  res.json({ ok: true, revoked: info.changes });
 });
 
 module.exports = router;

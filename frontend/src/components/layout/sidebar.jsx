@@ -5,14 +5,14 @@ import {
   CalendarClock,
   Camera,
   Cpu,
+  FileSearch,
   Gauge,
+  HardDrive,
   Leaf,
-  Settings,
   Sprout,
   Users,
   X,
 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/lib/auth-context';
 import { cn } from '@/lib/cn';
@@ -20,15 +20,11 @@ import { cn } from '@/lib/cn';
 const PRIMARY_NAV = [
   { to: '/', label: 'Dashboard', icon: Gauge, end: true },
   { to: '/devices', label: 'Devices', icon: Cpu },
+  { to: '/camera', label: 'Live Camera', icon: Camera },
   { to: '/schedules', label: 'Schedules', icon: CalendarClock },
   { to: '/alerts', label: 'Alerts', icon: Bell },
   { to: '/activity', label: 'Activity', icon: Activity },
   { to: '/species', label: 'Species', icon: Leaf },
-];
-
-const COMING_SOON_NAV = [
-  { label: 'Live Camera', icon: Camera },
-  { label: 'Setup', icon: Settings },
 ];
 
 export function Sidebar({ open, onClose }) {
@@ -75,15 +71,12 @@ export function Sidebar({ open, onClose }) {
 
           {isOwner && (
             <NavSection label="Admin">
+              <NavItem to="/hardware" label="Hardware" icon={HardDrive} onNavigate={onClose} />
               <NavItem to="/team" label="Team" icon={Users} onNavigate={onClose} />
+              <NavItem to="/audit" label="Audit log" icon={FileSearch} onNavigate={onClose} />
             </NavSection>
           )}
 
-          <NavSection label="Coming soon">
-            {COMING_SOON_NAV.map((item) => (
-              <DisabledNavItem key={item.label} {...item} />
-            ))}
-          </NavSection>
         </nav>
 
         <div className="border-t border-border px-5 py-3 text-[11px] text-muted-foreground">
@@ -147,19 +140,3 @@ function NavItem({ to, label, icon: Icon, end, onNavigate }) {
   );
 }
 
-function DisabledNavItem({ label, icon: Icon }) {
-  return (
-    <li>
-      <div
-        className="flex cursor-not-allowed items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground/60"
-        aria-disabled
-      >
-        <Icon className="size-4" />
-        <span className="flex-1 truncate">{label}</span>
-        <Badge variant="muted" className="text-[10px]">
-          soon
-        </Badge>
-      </div>
-    </li>
-  );
-}

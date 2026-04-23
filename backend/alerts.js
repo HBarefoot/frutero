@@ -50,8 +50,40 @@ function fire(metric, side, value, threshold) {
   sendTelegram(message);
 }
 
-function sendTelegram(_message) {
-  // TODO: wire Telegram bot token from settings when operator enables it.
+// Fire-and-forget Telegram notification. Reads settings on each call so the
+// operator can enable/reconfigure without a server restart. Swallows all
+// network errors — alerting about an alerting failure isn't useful.
+async function sendTelegram(message) {
+  try {
+    const s = Q.getAllSettings();
+    if (s.telegram_enabled !== '1') return { sent: false, reason: 'disabled' };
+    const token = (s.telegram_bot_token || '').trim();
+    const chatId = (s.telegram_chat_id || '').trim();
+    if (!token || !chatId) return { sent: false, reason: 'missing_config' };
+
+    const url = `https://api.telegram.org/bot${encodeURIComponent(token)}/sendMessage`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: message }),
+        signal: controller.signal,
+      });
+      if (!r.ok) {
+        const body = await r.text().catch(() => '');
+        console.error('[alerts] telegram non-2xx:', r.status, body.slice(0, 200));
+        return { sent: false, reason: `http_${r.status}` };
+      }
+      return { sent: true };
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (err) {
+    console.error('[alerts] telegram send failed:', err.message);
+    return { sent: false, reason: err.message };
+  }
 }
 
 function recent(limit = 10) {

@@ -12,10 +12,13 @@ import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/layout/page-header';
 import { applySpecies } from '@/lib/api';
 import { useStatus } from '@/lib/status-context';
+import { useAuth } from '@/lib/auth-context';
 import { cn } from '@/lib/cn';
 
 export default function SpeciesPage() {
   const { settings, refresh } = useStatus();
+  const { can } = useAuth();
+  const readOnly = !can('mutate');
   const [busy, setBusy] = useState(false);
   const current = settings?.settings?.species || '';
   const presets = settings?.species_presets || {};
@@ -44,7 +47,8 @@ export default function SpeciesPage() {
             presetKey={key}
             preset={preset}
             selected={key === current}
-            disabled={busy}
+            disabled={busy || readOnly}
+            readOnly={readOnly}
             onSelect={() => pick(key)}
           />
         ))}
@@ -53,7 +57,7 @@ export default function SpeciesPage() {
   );
 }
 
-function SpeciesCard({ presetKey, preset, selected, disabled, onSelect }) {
+function SpeciesCard({ presetKey, preset, selected, disabled, readOnly, onSelect }) {
   return (
     <Card
       className={cn(
@@ -90,7 +94,7 @@ function SpeciesCard({ presetKey, preset, selected, disabled, onSelect }) {
           disabled={disabled || selected}
         >
           <Sprout />
-          {selected ? 'Applied' : 'Apply preset'}
+          {selected ? 'Applied' : readOnly ? 'Read only' : 'Apply preset'}
         </Button>
       </CardContent>
     </Card>

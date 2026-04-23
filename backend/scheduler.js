@@ -1,66 +1,70 @@
 const schedule = require('node-schedule');
-const config = require('./config');
 const gpio = require('./gpio');
 const { Q } = require('./database');
 
-const jobs = new Map(); // id → node-schedule Job
-const autoOffTimers = new Map(); // device → Timeout
-
-function fanOnDuration() {
-  const fromSetting = parseInt(Q.getAllSettings().fan_on_duration, 10);
-  return Number.isFinite(fromSetting) && fromSetting > 0
-    ? fromSetting
-    : config.FAN_ON_DURATION;
-}
+const jobs = new Map();           // schedule id → node-schedule Job
+const autoOffTimers = new Map();  // actuator key → Timeout
 
 function runScheduledAction(row) {
-  const device = row.device;
+  const key = row.device;
   const wantOn = row.action === 'on';
 
-  // Manual override: skip THIS scheduled event but clear the flag so
-  // the next scheduled transition runs normally.
-  if (gpio.isManualOverride(device)) {
+  if (!gpio.hasActuator(key)) {
+    console.warn(`[scheduler] schedule #${row.id} references unknown actuator '${key}' — skipping`);
+    return;
+  }
+
+  // Manual override: skip THIS scheduled event but clear the flag so the
+  // next scheduled transition runs normally.
+  if (gpio.isManualOverride(key)) {
     console.log(
-      `[scheduler] skipping ${device} ${row.action} (schedule #${row.id}) — manual override active; clearing for next run`
+      `[scheduler] skipping ${key} ${row.action} (schedule #${row.id}) — manual override active; clearing for next run`
     );
-    gpio.clearManualOverride(device);
+    gpio.clearManualOverride(key);
     return;
   }
 
   try {
-    if (device === 'fan') {
-      gpio.setFan(wantOn, 'schedule');
-    } else if (device === 'light') {
-      gpio.setLight(wantOn, 'schedule');
-    }
+    gpio.setActuator(key, wantOn, 'schedule');
   } catch (err) {
-    console.error(`[scheduler] failed to apply ${device} ${row.action}:`, err);
+    console.error(`[scheduler] failed to apply ${key} ${row.action}:`, err);
     return;
   }
 
-  // Fan-on schedules auto-off after FAN_ON_DURATION (the FAE cycle pattern).
-  if (device === 'fan' && wantOn) {
-    clearFanAutoOff();
-    const ms = fanOnDuration() * 1000;
-    const timer = setTimeout(() => {
-      try {
-        gpio.setFan(false, 'schedule');
-      } catch (err) {
-        console.error('[scheduler] fan auto-off failed:', err);
-      } finally {
-        autoOffTimers.delete('fan');
-      }
-    }, ms);
-    autoOffTimers.set('fan', timer);
+  // Pulse-style actuators (fan, mister) have a non-null auto_off_seconds.
+  // For 'on' transitions we schedule an auto-off; for 'off' we clear any
+  // pending auto-off so we don't double-write later.
+  if (wantOn) {
+    const seconds = gpio.autoOffSeconds(key);
+    if (seconds && seconds > 0) {
+      armAutoOff(key, seconds);
+    }
+  } else {
+    clearAutoOff(key);
   }
 }
 
-function clearFanAutoOff() {
-  const t = autoOffTimers.get('fan');
+function armAutoOff(key, seconds) {
+  clearAutoOff(key);
+  const timer = setTimeout(() => {
+    try { gpio.setActuator(key, false, 'schedule'); }
+    catch (err) { console.error(`[scheduler] auto-off ${key} failed:`, err); }
+    finally { autoOffTimers.delete(key); }
+  }, seconds * 1000);
+  autoOffTimers.set(key, timer);
+}
+
+function clearAutoOff(key) {
+  const t = autoOffTimers.get(key);
   if (t) {
     clearTimeout(t);
-    autoOffTimers.delete('fan');
+    autoOffTimers.delete(key);
   }
+}
+
+function clearAllAutoOff() {
+  for (const t of autoOffTimers.values()) clearTimeout(t);
+  autoOffTimers.clear();
 }
 
 function register(row) {
@@ -78,14 +82,10 @@ function register(row) {
 
 function unregisterAll() {
   for (const [id, job] of jobs) {
-    try {
-      job.cancel();
-    } catch {
-      // ignore
-    }
+    try { job.cancel(); } catch { /* ignore */ }
     jobs.delete(id);
   }
-  clearFanAutoOff();
+  clearAllAutoOff();
 }
 
 function reload() {
@@ -104,15 +104,35 @@ function nextInvocations() {
   return out;
 }
 
-function runTimedTest(device, durationSec, userId = null) {
-  const setter = device === 'fan' ? gpio.setFan : gpio.setLight;
-  setter(true, 'api', userId);
+// Earliest upcoming 'on' invocation per actuator key, e.g.
+// { fan: '2026-04-23T18:30:00.000Z', mister: null }. Used by the devices
+// page to show each actuator's next scheduled fire.
+function nextByDevice() {
+  const rows = Q.listEnabledSchedules();
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const out = {};
+  for (const [id, job] of jobs) {
+    const row = byId.get(id);
+    if (!row || row.action !== 'on') continue;
+    const next = job.nextInvocation();
+    if (!next) continue;
+    const iso = next.toDate().toISOString();
+    const existing = out[row.device];
+    if (!existing || iso < existing) out[row.device] = iso;
+  }
+  return out;
+}
+
+function runTimedTest(key, durationSec, userId = null) {
+  if (!gpio.hasActuator(key)) {
+    throw new Error(`unknown actuator '${key}'`);
+  }
+  // 'test' trigger leaves manualOverride unchanged — the next scheduled
+  // transition runs normally instead of being skipped once.
+  gpio.setActuator(key, true, 'test', userId);
   setTimeout(() => {
-    try {
-      setter(false, 'api', userId);
-    } catch (err) {
-      console.error('[scheduler] test auto-off failed:', err);
-    }
+    try { gpio.setActuator(key, false, 'test', userId); }
+    catch (err) { console.error('[scheduler] test auto-off failed:', err); }
   }, durationSec * 1000);
 }
 
@@ -120,4 +140,4 @@ function shutdown() {
   unregisterAll();
 }
 
-module.exports = { reload, unregisterAll, nextInvocations, runTimedTest, shutdown };
+module.exports = { reload, unregisterAll, nextInvocations, nextByDevice, runTimedTest, shutdown };

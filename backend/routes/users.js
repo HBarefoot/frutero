@@ -80,6 +80,32 @@ router.delete('/users/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Owner issues a password reset token for another user. Returns the token
+ * + URL once — it's the caller's job to deliver it out-of-band. Owners
+ * can also issue a reset for themselves (useful if they want to force
+ * re-authentication on every device).
+ */
+router.post('/users/:id/password-reset', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const user = Q.findUserById(id);
+  if (!user) return res.status(404).json({ error: 'not_found' });
+  if (user.disabled) return res.status(409).json({ error: 'user_disabled' });
+
+  const token = auth.generateToken(24);
+  const expires_at = auth.newInviteExpiry(); // 72h TTL, same as invites
+  Q.insertPasswordReset({
+    token,
+    user_id: id,
+    issued_by: req.user.id,
+    expires_at,
+  });
+  auth.logAudit(req, 'user.password_reset_issued', `user:${id}`, {
+    token_preview: token.slice(0, 8),
+  });
+  res.status(201).json({ token, expires_at, email: user.email });
+});
+
 /** Force-logout all sessions for a user. */
 router.post('/users/:id/revoke-sessions', (req, res) => {
   const id = parseInt(req.params.id, 10);

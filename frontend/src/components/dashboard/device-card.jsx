@@ -1,46 +1,65 @@
 import { useState } from 'react';
-import { Lightbulb, Play, Power, Waves, Wind } from 'lucide-react';
+import {
+  Droplets,
+  Fan,
+  Flame,
+  Lightbulb,
+  Play,
+  Power,
+  Plug,
+  Waves,
+  Wind,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
-import { clearOverride, runTest, setFan, setLight } from '@/lib/api';
+import { clearOverride, runTest, setDevice } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatDateTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 
-const DEVICE_META = {
-  fan:     { label: 'Fans',   icon: Wind,      accent: 'text-info',    soft: 'bg-info/10',    ring: 'ring-info/30' },
-  light:   { label: 'Lights', icon: Lightbulb, accent: 'text-warning', soft: 'bg-warning/10', ring: 'ring-warning/30' },
-  mister:  { label: 'Mister', icon: Waves,     accent: 'text-info',    soft: 'bg-info/10',    ring: 'ring-info/30' },
+// Per-kind visual treatment. Unknown kinds fall back to KIND_DEFAULT.
+const KIND_META = {
+  fan:        { icon: Wind,      accent: 'text-info',    soft: 'bg-info/10',    ring: 'ring-info/30' },
+  light:      { icon: Lightbulb, accent: 'text-warning', soft: 'bg-warning/10', ring: 'ring-warning/30' },
+  mister:     { icon: Waves,     accent: 'text-info',    soft: 'bg-info/10',    ring: 'ring-info/30' },
+  humidifier: { icon: Droplets,  accent: 'text-info',    soft: 'bg-info/10',    ring: 'ring-info/30' },
+  pump:       { icon: Droplets,  accent: 'text-info',    soft: 'bg-info/10',    ring: 'ring-info/30' },
+  heater:     { icon: Flame,     accent: 'text-warning', soft: 'bg-warning/10', ring: 'ring-warning/30' },
+  exhaust:    { icon: Fan,       accent: 'text-info',    soft: 'bg-info/10',    ring: 'ring-info/30' },
 };
-
-const API = {
-  fan: setFan,
-  light: setLight,
-};
+const KIND_DEFAULT = { icon: Plug, accent: 'text-muted-foreground', soft: 'bg-muted', ring: 'ring-muted-foreground/30' };
 
 export function DeviceCard({
-  device,
-  on,
-  manualOverride,
+  actuator,           // preferred: { key, name, kind, state, manualOverride, gpio_pin, inverted, auto_off_seconds }
+  device,             // legacy prop: actuator key (resolved from status if `actuator` not given)
+  on,                 // legacy
+  manualOverride,     // legacy
   subtitle,
   nextFire,
   onRefresh,
   disabled,
   children,
 }) {
-  const meta = DEVICE_META[device];
+  const key = actuator?.key ?? device;
+  const kind = actuator?.kind ?? device;
+  const label = actuator?.name ?? defaultLabel(device);
+  const isOn = actuator ? !!actuator.state : !!on;
+  const isOverride = actuator ? !!actuator.manualOverride : !!manualOverride;
+  const meta = KIND_META[kind] || KIND_DEFAULT;
   const Icon = meta.icon;
   const { can } = useAuth();
   const readOnly = !can('mutate');
   const [busy, setBusy] = useState(false);
 
+  const subtitleText = subtitle ?? (actuator ? defaultSubtitle(actuator) : null);
+
   async function toggle() {
     if (disabled) return;
     setBusy(true);
     try {
-      await API[device](!on);
+      await setDevice(key, !isOn);
     } finally {
       setBusy(false);
     }
@@ -50,59 +69,53 @@ export function DeviceCard({
     if (disabled) return;
     setBusy(true);
     try {
-      await runTest(device, 5);
+      await runTest(key, 5);
     } finally {
       setBusy(false);
     }
   }
 
   async function releaseOverride() {
-    await clearOverride(device);
+    await clearOverride(key);
     await onRefresh?.();
   }
 
   return (
-    <Card
-      className={cn(
-        'relative overflow-hidden transition',
-        on && 'ring-1',
-        on && meta.ring
-      )}
-    >
+    <Card className={cn('relative overflow-hidden transition', isOn && 'ring-1', isOn && meta.ring)}>
       <CardContent className="pt-5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
             <div
               className={cn(
                 'grid size-10 place-items-center rounded-md transition-colors',
-                on ? meta.soft : 'bg-muted',
-                on ? meta.accent : 'text-muted-foreground'
+                isOn ? meta.soft : 'bg-muted',
+                isOn ? meta.accent : 'text-muted-foreground'
               )}
             >
               <Icon className="size-5" />
             </div>
             <div>
-              <div className="text-base font-semibold">{meta.label}</div>
-              {subtitle && (
-                <div className="mt-0.5 text-xs text-muted-foreground">{subtitle}</div>
+              <div className="text-base font-semibold">{label}</div>
+              {subtitleText && (
+                <div className="mt-0.5 text-xs text-muted-foreground">{subtitleText}</div>
               )}
             </div>
           </div>
           <Switch
-            checked={on}
+            checked={isOn}
             disabled={busy || disabled || readOnly}
             onCheckedChange={toggle}
-            aria-label={`Toggle ${meta.label.toLowerCase()}`}
+            aria-label={`Toggle ${label.toLowerCase()}`}
           />
         </div>
 
         <div className="mt-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs">
-            <Badge variant={on ? 'success' : 'muted'}>
+            <Badge variant={isOn ? 'success' : 'muted'}>
               <Power className="size-3" />
-              {on ? 'ON' : 'OFF'}
+              {isOn ? 'ON' : 'OFF'}
             </Badge>
-            {manualOverride && (
+            {isOverride && (
               <Badge variant="warning" className="uppercase">
                 manual
               </Badge>
@@ -114,18 +127,13 @@ export function DeviceCard({
                 read-only
               </span>
             )}
-            {!readOnly && manualOverride && (
+            {!readOnly && isOverride && (
               <Button variant="ghost" size="sm" onClick={releaseOverride}>
                 clear override
               </Button>
             )}
             {!readOnly && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={test}
-                disabled={busy || disabled}
-              >
+              <Button variant="outline" size="sm" onClick={test} disabled={busy || disabled}>
                 <Play />
                 Test&nbsp;5s
               </Button>
@@ -143,4 +151,16 @@ export function DeviceCard({
       </CardContent>
     </Card>
   );
+}
+
+function defaultLabel(device) {
+  if (!device) return 'Device';
+  return device.charAt(0).toUpperCase() + device.slice(1);
+}
+
+function defaultSubtitle(a) {
+  const bits = [`GPIO ${a.gpio_pin}`];
+  if (a.inverted) bits.push('NC wiring');
+  if (a.auto_off_seconds) bits.push(`auto-off ${a.auto_off_seconds}s`);
+  return bits.join(' · ');
 }

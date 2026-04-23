@@ -2,13 +2,18 @@ const config = require('./config');
 const ws = require('./ws');
 const { Q } = require('./database');
 
-let alerts = null; // set lazily to avoid circular require
+let alerts = null;       // set lazily to avoid circular require
+let automations = null;  // set lazily for the same reason
 let realSensor = null;
 let intervalHandle = null;
 const latest = { temperature: null, humidity: null, simulated: true, timestamp: null };
 
 function setAlerts(mod) {
   alerts = mod;
+}
+
+function setAutomations(mod) {
+  automations = mod;
 }
 
 function cToF(c) {
@@ -64,12 +69,16 @@ function readReal() {
   }
 }
 
-function tick() {
+// DHT22 requires ~2s between reads — retrying immediately produces the same
+// failure. Wait before the second attempt, then give up for this tick.
+const DHT_RETRY_DELAY_MS = 2100;
+
+async function tick() {
   let reading;
   if (config.SENSOR_AVAILABLE) {
     reading = readReal();
     if (!reading) {
-      // Retry once, then drop this tick rather than writing a bad reading.
+      await new Promise((r) => setTimeout(r, DHT_RETRY_DELAY_MS));
       reading = readReal();
     }
     if (!reading) return;
@@ -98,6 +107,14 @@ function tick() {
       console.error('[sensor] alerts.check error:', err);
     }
   }
+
+  if (automations) {
+    try {
+      automations.onSensorReading(reading);
+    } catch (err) {
+      console.error('[sensor] automations.onSensorReading error:', err);
+    }
+  }
 }
 
 function start() {
@@ -117,4 +134,4 @@ function getLatest() {
   return { ...latest };
 }
 
-module.exports = { start, stop, getLatest, setAlerts };
+module.exports = { start, stop, getLatest, setAlerts, setAutomations };

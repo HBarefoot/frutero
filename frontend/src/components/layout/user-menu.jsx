@@ -52,9 +52,11 @@ export function UserMenu() {
             </Link>
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem disabled>
-          <Settings />
-          Account settings
+        <DropdownMenuItem asChild>
+          <Link to="/account">
+            <Settings />
+            Account settings
+          </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={logout}>

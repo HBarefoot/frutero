@@ -10,6 +10,7 @@ const gpio = require('./gpio');
 const sensor = require('./sensor');
 const alerts = require('./alerts');
 const scheduler = require('./scheduler');
+const automations = require('./automations');
 const auth = require('./auth');
 
 const authRoutes = require('./routes/auth');
@@ -21,11 +22,16 @@ const readingsRoutes = require('./routes/readings');
 const alertsRoutes = require('./routes/alerts');
 const settingsRoutes = require('./routes/settings');
 const testRoutes = require('./routes/test');
+const actuatorRoutes = require('./routes/actuators');
+const hardwareRoutes = require('./routes/hardware');
+const mistingRoutes = require('./routes/misting');
+const cameraRoutes = require('./routes/camera');
 
 async function main() {
   db.init();
   gpio.init();
   sensor.setAlerts(alerts);
+  sensor.setAutomations(automations);
   auth.startSessionJanitor();
 
   const app = express();
@@ -33,6 +39,28 @@ async function main() {
   app.use(express.json({ limit: '64kb' }));
   app.use(cookieParser());
   app.use(auth.attachUser);
+
+  // Unauthenticated healthcheck. Lightweight probe for load balancers,
+  // monitoring, and the future cloud fleet agent. Never exposes PII.
+  const bootedAt = Date.now();
+  app.get('/api/health', (_req, res) => {
+    let dbOk = false;
+    try { dbOk = typeof db.Q.countUsers() === 'number'; } catch { /* ignore */ }
+    const latest = sensor.getLatest();
+    // Sensor is "ok" if we've seen any reading in the last 5 minutes.
+    const sensorOk = !!latest.timestamp
+      && (Date.now() - new Date(latest.timestamp).getTime()) < 5 * 60 * 1000;
+    const status = dbOk && (sensorOk || latest.simulated) ? 'ok' : 'degraded';
+    res.status(dbOk ? 200 : 503).json({
+      status,
+      uptime_seconds: Math.floor((Date.now() - bootedAt) / 1000),
+      db_ok: dbOk,
+      sensor_ok: sensorOk,
+      sensor_simulated: !!latest.simulated,
+      gpio_mock: gpio.isMock(),
+      version: '0.3',
+    });
+  });
 
   // Auth routes are unauthenticated (bootstrap / login / setup wizard /
   // invite accept). /auth/me requires a session but the router handles
@@ -56,6 +84,10 @@ async function main() {
   app.use('/api', alertsRoutes);
   app.use('/api', settingsRoutes);
   app.use('/api', testRoutes);
+  app.use('/api', actuatorRoutes);
+  app.use('/api', hardwareRoutes);
+  app.use('/api', mistingRoutes);
+  app.use('/api', cameraRoutes);
   app.use('/api', usersRoutes);
 
   const publicDir = path.isAbsolute(config.PUBLIC_DIR)

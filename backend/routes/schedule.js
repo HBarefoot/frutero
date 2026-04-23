@@ -1,16 +1,18 @@
 const express = require('express');
 const { Q } = require('../database');
 const scheduler = require('../scheduler');
+const gpio = require('../gpio');
 
 const router = express.Router();
 
-const DEVICES = new Set(['fan', 'light']);
 const ACTIONS = new Set(['on', 'off']);
 
 function validate(payload, partial = false) {
   const errs = [];
   if (!partial || payload.device !== undefined) {
-    if (!DEVICES.has(payload.device)) errs.push('device must be fan|light');
+    if (typeof payload.device !== 'string' || !gpio.hasActuator(payload.device)) {
+      errs.push('device must be a known actuator key');
+    }
   }
   if (!partial || payload.action !== undefined) {
     if (!ACTIONS.has(payload.action)) errs.push('action must be on|off');

@@ -7,17 +7,17 @@ const router = express.Router();
 const startedAt = Date.now();
 
 router.get('/status', (_req, res) => {
+  const list = gpio.listActuators();
+  const actuators = {};
+  for (const a of list) actuators[a.key] = a;
+
   res.json({
-    fan: gpio.getFanState(),
-    light: gpio.getLightState(),
+    actuators,
     sensor: sensor.getLatest(),
-    manualOverride: {
-      fan: gpio.isManualOverride('fan'),
-      light: gpio.isManualOverride('light'),
-    },
     uptime: Math.floor((Date.now() - startedAt) / 1000),
     gpioMock: gpio.isMock(),
     nextInvocations: scheduler.nextInvocations(),
+    nextByDevice: scheduler.nextByDevice(),
     timestamp: new Date().toISOString(),
   });
 });

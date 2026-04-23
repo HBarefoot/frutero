@@ -10,12 +10,17 @@ import { ActivityFeed } from '@/components/dashboard/activity-feed';
 import { useStatus } from '@/lib/status-context';
 
 export default function DashboardPage() {
-  const { status, alerts, refresh } = useStatus();
+  const { status, alerts, actuators, refresh } = useStatus();
 
   const nextFire = useMemo(() => {
     const times = Object.values(status?.nextInvocations || {}).filter(Boolean);
     return times.sort()[0] || null;
   }, [status]);
+
+  const enabledActuators = useMemo(
+    () => Object.values(actuators).filter((a) => a.enabled),
+    [actuators]
+  );
 
   if (!status) return <Loading />;
 
@@ -36,21 +41,14 @@ export default function DashboardPage() {
         <SensorCards sensor={status.sensor} alerts={alerts} />
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <DeviceCard
-            device="fan"
-            on={!!status.fan}
-            manualOverride={!!status.manualOverride?.fan}
-            subtitle="GPIO 18 · FAE cycle"
-            nextFire={nextFire}
-            onRefresh={refresh}
-          />
-          <DeviceCard
-            device="light"
-            on={!!status.light}
-            manualOverride={!!status.manualOverride?.light}
-            subtitle="GPIO 17 · 12h photoperiod"
-            onRefresh={refresh}
-          />
+          {enabledActuators.map((a) => (
+            <DeviceCard
+              key={a.key}
+              actuator={a}
+              nextFire={nextFire}
+              onRefresh={refresh}
+            />
+          ))}
         </div>
 
         <LiveChart />

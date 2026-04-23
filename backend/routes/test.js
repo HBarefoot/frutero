@@ -1,13 +1,14 @@
 const express = require('express');
 const scheduler = require('../scheduler');
+const gpio = require('../gpio');
 const auth = require('../auth');
 
 const router = express.Router();
 
 router.post('/test', (req, res) => {
   const { device, duration } = req.body || {};
-  if (!['fan', 'light'].includes(device)) {
-    return res.status(400).json({ error: 'device must be fan|light' });
+  if (typeof device !== 'string' || !gpio.hasActuator(device)) {
+    return res.status(400).json({ error: 'device must be a known actuator key' });
   }
   const sec = Number(duration);
   if (!Number.isFinite(sec) || sec <= 0 || sec > 300) {

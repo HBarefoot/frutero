@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Check,
   Copy,
+  KeyRound,
   MailPlus,
   MoreHorizontal,
   ShieldAlert,
@@ -37,6 +38,7 @@ import {
   deleteUserRequest,
   fetchInvites,
   fetchUsers,
+  issuePasswordReset,
   revokeInvite,
   revokeUserSessions,
   setUserDisabled,
@@ -53,6 +55,7 @@ export default function TeamPage() {
   const [invites, setInvites] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [resetLink, setResetLink] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -101,6 +104,7 @@ export default function TeamPage() {
             currentUserId={user.id}
             loading={loading}
             onReload={load}
+            onIssueReset={setResetLink}
           />
           <InvitesCard invites={invites} onReload={load} />
         </div>
@@ -109,11 +113,14 @@ export default function TeamPage() {
       {error && (
         <p className="mt-4 text-xs text-danger">{error}</p>
       )}
+      {resetLink && (
+        <ResetLinkModal link={resetLink} onClose={() => setResetLink(null)} />
+      )}
     </>
   );
 }
 
-function UsersCard({ users, currentUserId, loading, onReload }) {
+function UsersCard({ users, currentUserId, loading, onReload, onIssueReset }) {
   return (
     <Card>
       <CardHeader>
@@ -133,6 +140,7 @@ function UsersCard({ users, currentUserId, loading, onReload }) {
                 u={u}
                 self={u.id === currentUserId}
                 onReload={onReload}
+                onIssueReset={onIssueReset}
               />
             ))}
           </ul>
@@ -142,7 +150,7 @@ function UsersCard({ users, currentUserId, loading, onReload }) {
   );
 }
 
-function UserRow({ u, self, onReload }) {
+function UserRow({ u, self, onReload, onIssueReset }) {
   async function changeRole(role) {
     try {
       await updateUserRole(u.id, role);
@@ -179,6 +187,22 @@ function UserRow({ u, self, onReload }) {
       const code = err?.response?.data?.error;
       if (code === 'last_owner') alert('Cannot delete the last owner.');
       else if (code === 'cannot_delete_self') alert('Cannot delete your own account.');
+    }
+  }
+
+  async function issueReset() {
+    try {
+      const { token, expires_at } = await issuePasswordReset(u.id);
+      onIssueReset({
+        email: u.email,
+        url: `${window.location.origin}/reset/${token}`,
+        expires_at,
+      });
+    } catch (err) {
+      const code = err?.response?.data?.error;
+      alert(code === 'user_disabled'
+        ? 'Re-enable this user before issuing a reset.'
+        : 'Could not issue a reset link.');
     }
   }
 
@@ -221,6 +245,10 @@ function UserRow({ u, self, onReload }) {
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={issueReset} disabled={u.disabled}>
+              <KeyRound />
+              Issue password reset
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={revokeAllSessions}>
               <UserX />
               Revoke sessions
@@ -412,6 +440,52 @@ function InviteForm({ onCreated }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function ResetLinkModal({ link, onClose }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(link.url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* user can select manually */ }
+  }
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-background/80 backdrop-blur-sm p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <Card className="w-full max-w-lg">
+        <CardHeader>
+          <CardTitleGroup>
+            <div className="flex items-center gap-2">
+              <KeyRound className="size-4 text-muted-foreground" />
+              <CardTitle>Password reset link</CardTitle>
+            </div>
+            <CardDescription>
+              Send this link to <span className="font-mono">{link.email}</span> out-of-band.
+              It is shown only once. Expires in 72 hours.
+            </CardDescription>
+          </CardTitleGroup>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="rounded-md border border-border bg-background/40 p-3">
+            <code className="block break-all font-mono text-[11px] text-foreground">{link.url}</code>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>Close</Button>
+            <Button onClick={copy}>
+              {copied ? <Check /> : <Copy />}
+              {copied ? 'Copied' : 'Copy link'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
