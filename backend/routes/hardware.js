@@ -27,6 +27,10 @@ router.get('/hardware/onewire', auth.requireAdmin, (_req, res) => {
   res.json(hardware.scan1Wire());
 });
 
+router.get('/hardware/sensors', auth.requireAdmin, (_req, res) => {
+  res.json(hardware.scanSensors());
+});
+
 router.get('/hardware/video', auth.requireAdmin, (_req, res) => {
   res.json(hardware.scanVideo());
 });

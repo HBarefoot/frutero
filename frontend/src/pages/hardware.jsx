@@ -133,7 +133,7 @@ export default function HardwarePage() {
 
         <div className="space-y-6">
           <I2CCard scan={scan} />
-          <OneWireCard scan={scan} />
+          <SensorsCard scan={scan} />
           <VideoCard scan={scan} />
         </div>
       </div>
@@ -488,13 +488,16 @@ function I2CCard({ scan }) {
   const i2c = scan?.i2c;
   const buses = i2c?.buses || [];
   const totalDevices = buses.reduce((n, b) => n + (b.devices?.length || 0), 0);
+  // Hide the card entirely when there's nothing to show — the bus being
+  // enabled-but-empty is inferrable from GPIO 2/3 showing "reserved" in the
+  // GPIO map. Only render when I²C isn't enabled (actionable hint) or when
+  // at least one device is detected.
+  if (i2c && buses.length > 0 && totalDevices === 0) return null;
   const caption = !i2c
     ? 'Scanning…'
     : buses.length === 0
       ? 'user bus not enabled'
-      : totalDevices === 0
-        ? `${buses.length} bus${buses.length === 1 ? '' : 'es'} · 0 sensors`
-        : `${totalDevices} sensor${totalDevices === 1 ? '' : 's'} on ${buses.length} bus${buses.length === 1 ? '' : 'es'}`;
+      : `${totalDevices} sensor${totalDevices === 1 ? '' : 's'} on ${buses.length} bus${buses.length === 1 ? '' : 'es'}`;
   return (
     <Card>
       <CardHeader>
@@ -539,45 +542,72 @@ function I2CCard({ scan }) {
   );
 }
 
-// --- 1-Wire ----------------------------------------------------------
+// --- Sensors (DHT22 + 1-Wire) ----------------------------------------
 
-function OneWireCard({ scan }) {
-  const w = scan?.oneWire;
-  const count = w?.devices?.length ?? 0;
+function SensorsCard({ scan }) {
+  const s = scan?.sensors;
+  const dht22 = s?.dht22;
+  const oneWire = s?.oneWire;
+  const oneWireCount = oneWire?.devices?.length ?? 0;
+  const totalCount = (dht22 ? 1 : 0) + oneWireCount;
+  const caption = !s
+    ? 'Scanning…'
+    : `${totalCount} sensor${totalCount === 1 ? '' : 's'}`;
+
   return (
     <Card>
       <CardHeader>
         <CardTitleGroup>
           <div className="flex items-center gap-2">
             <Thermometer className="size-4 text-muted-foreground" />
-            <CardTitle>1-Wire</CardTitle>
+            <CardTitle>Sensors</CardTitle>
           </div>
-          <CardDescription>
-            {!w ? 'Scanning…' : !w.enabled ? 'not enabled' : `${count} probe${count === 1 ? '' : 's'}`}
-          </CardDescription>
+          <CardDescription>{caption}</CardDescription>
         </CardTitleGroup>
       </CardHeader>
-      {w && (w.enabled && count > 0) && (
+      {s && (
         <CardContent className="pt-0">
           <ul className="space-y-1 text-xs">
-            {w.devices.map((d) => (
-              <li key={d.id} className="flex items-center justify-between rounded-md border border-border bg-background/40 px-3 py-2">
-                <span className="font-mono">{d.id}</span>
-                <span className="text-muted-foreground">{d.kind}</span>
-              </li>
-            ))}
+            {dht22 && <DhtRow dht={dht22} />}
+            {oneWireCount > 0 &&
+              oneWire.devices.map((d) => (
+                <li
+                  key={d.id}
+                  className="flex items-center justify-between rounded-md border border-border bg-background/40 px-3 py-2"
+                >
+                  <span className="font-mono">{d.id}</span>
+                  <span className="text-muted-foreground">{d.kind} · 1-Wire</span>
+                </li>
+              ))}
           </ul>
         </CardContent>
       )}
-      {w && !w.enabled && w.hint && (
-        <CardContent className="pt-0">
-          <details className="text-[11px] text-muted-foreground">
-            <summary className="cursor-pointer hover:text-foreground">How to enable</summary>
-            <p className="mt-2 leading-relaxed">{w.hint}</p>
-          </details>
-        </CardContent>
-      )}
     </Card>
+  );
+}
+
+function DhtRow({ dht }) {
+  const r = dht.reading;
+  return (
+    <li className="rounded-md border border-border bg-background/40 px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="font-semibold">DHT22</span>
+          <Badge variant="outline" className="font-mono">GPIO {dht.pin}</Badge>
+          {dht.simulated && <Badge variant="warning">simulated</Badge>}
+        </div>
+        <span className="text-muted-foreground">temperature · humidity</span>
+      </div>
+      {r ? (
+        <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+          {r.temperature}°F · {r.humidity}% RH
+        </div>
+      ) : (
+        <div className="mt-1 text-[11px] text-muted-foreground">
+          waiting for first reading…
+        </div>
+      )}
+    </li>
   );
 }
 

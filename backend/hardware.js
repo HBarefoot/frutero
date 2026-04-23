@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 const config = require('./config');
+const sensor = require('./sensor');
 const { Q } = require('./database');
 
 // Known I²C device address → suspected chip. Multiple chips can share an
@@ -130,12 +131,7 @@ function scanI2C() {
 function scan1Wire() {
   const dir = '/sys/bus/w1/devices';
   if (!fs.existsSync(dir)) {
-    return {
-      stub: false,
-      enabled: false,
-      hint: 'Add `dtoverlay=w1-gpio` to /boot/firmware/config.txt and reboot to enable 1-Wire on GPIO 4. Note: GPIO 4 is currently used by DHT22 in this build.',
-      devices: [],
-    };
+    return { stub: false, enabled: false, devices: [] };
   }
   let entries;
   try { entries = fs.readdirSync(dir); }
@@ -151,6 +147,31 @@ function scan1Wire() {
       return { id, kind };
     });
   return { stub: false, enabled: true, devices };
+}
+
+// ---------------- Sensors (DHT22 + 1-Wire) ----------------
+
+// Combines the configured DHT22 (its own single-wire protocol, not Dallas
+// 1-Wire) with any devices on the kernel 1-Wire bus. The Hardware page's
+// "Sensors" panel is driven by this — we surface what's actually wired.
+function scanSensors() {
+  const latest = sensor.getLatest();
+  const hasReading =
+    Number.isFinite(latest.temperature) && Number.isFinite(latest.humidity);
+  const dht22 = {
+    kind: 'DHT22',
+    pin: config.DHT22_PIN,
+    available: !!config.SENSOR_AVAILABLE,
+    simulated: hasReading ? !!latest.simulated : !config.SENSOR_AVAILABLE,
+    reading: hasReading
+      ? {
+          temperature: latest.temperature,
+          humidity: latest.humidity,
+          timestamp: latest.timestamp,
+        }
+      : null,
+  };
+  return { dht22, oneWire: scan1Wire() };
 }
 
 // ---------------- Video ----------------
@@ -235,7 +256,7 @@ function scanAll() {
     timestamp: new Date().toISOString(),
     stub: !!config.GPIO_STUB,
     i2c: scanI2C(),
-    oneWire: scan1Wire(),
+    sensors: scanSensors(),
     video: scanVideo(),
     gpio: scanGpio(),
   };
@@ -245,6 +266,7 @@ module.exports = {
   scanAll,
   scanI2C,
   scan1Wire,
+  scanSensors,
   scanVideo,
   scanGpio,
   RESERVED_PINS,
