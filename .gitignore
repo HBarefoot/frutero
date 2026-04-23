@@ -5,6 +5,10 @@ backend/mushroom.db
 backend/mushroom.db-journal
 backend/mushroom.db-wal
 backend/mushroom.db-shm
+backend/dev.db
+backend/dev.db-journal
+backend/dev.db-wal
+backend/dev.db-shm
 *.log
 .env
 .env.local

@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
+    "dev:stub": "PORT=3001 GPIO_STUB=true SENSOR_STUB=true DB_PATH=./dev.db node --watch server.js",
     "seed": "node scripts/seed.js"
   },
   "dependencies": {
