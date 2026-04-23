@@ -32,6 +32,13 @@ router.post('/settings/species', (req, res) => {
   Q.upsertAlertConfig('temperature', preset.temp_min, preset.temp_max, true);
   Q.upsertAlertConfig('humidity', preset.humid_min, preset.humid_max, true);
 
+  if (preset.mister_threshold !== undefined) {
+    Q.setSetting('mister_humidity_threshold', String(preset.mister_threshold));
+  }
+  if (preset.mister_pulse_seconds !== undefined) {
+    Q.setSetting('mister_pulse_seconds', String(preset.mister_pulse_seconds));
+  }
+
   // Update the default fan cycle schedule to match new interval.
   const schedules = Q.listSchedules();
   const fanOn = schedules.find((s) => s.device === 'fan' && s.action === 'on');

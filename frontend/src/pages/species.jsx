@@ -86,6 +86,12 @@ function SpeciesCard({ presetKey, preset, selected, disabled, readOnly, onSelect
           <SpecRow label="Humidity" value={`${preset.humid_min}–${preset.humid_max} %`} />
           <SpecRow label="Photoperiod" value={`${preset.light_hours} h`} />
           <SpecRow label="Fan cycle" value={`Every ${preset.fan_interval} min`} />
+          {preset.mister_threshold !== undefined && (
+            <SpecRow
+              label="Mist trigger"
+              value={`< ${preset.mister_threshold}% · ${preset.mister_pulse_seconds}s`}
+            />
+          )}
         </dl>
         <Button
           variant={selected ? 'secondary' : 'soft'}

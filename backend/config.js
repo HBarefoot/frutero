@@ -48,6 +48,8 @@ module.exports = {
       humid_min: 80, humid_max: 95,
       light_hours: 12,
       fan_interval: 30,
+      mister_threshold: 80,
+      mister_pulse_seconds: 10,
     },
     lions_mane: {
       name: "Lion's Mane",
@@ -55,6 +57,8 @@ module.exports = {
       humid_min: 85, humid_max: 95,
       light_hours: 12,
       fan_interval: 20,
+      mister_threshold: 85,
+      mister_pulse_seconds: 10,
     },
     shiitake: {
       name: 'Shiitake',
@@ -62,6 +66,8 @@ module.exports = {
       humid_min: 80, humid_max: 90,
       light_hours: 12,
       fan_interval: 30,
+      mister_threshold: 80,
+      mister_pulse_seconds: 8,
     },
   },
 };
