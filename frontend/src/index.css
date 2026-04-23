@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-feature-settings: 'ss01', 'cv01';
+}
+
+.touch-btn {
+  @apply min-h-[44px] min-w-[44px];
+}

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+backend/public/
+backend/mushroom.db
+backend/mushroom.db-journal
+backend/mushroom.db-wal
+backend/mushroom.db-shm
+*.log
+.env
+.env.local
+.DS_Store

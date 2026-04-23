@@ -1,0 +1,18 @@
+[Unit]
+Description=Mushroom Grow Chamber Automation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/node /home/admin/frutero/backend/server.js
+WorkingDirectory=/home/admin/frutero/backend
+Restart=always
+RestartSec=5
+User=admin
+SupplementaryGroups=gpio
+Environment=NODE_ENV=production
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

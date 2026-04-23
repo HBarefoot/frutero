@@ -1,0 +1,90 @@
+const http = require('http');
+const path = require('path');
+const express = require('express');
+
+const config = require('./config');
+const db = require('./database');
+const ws = require('./ws');
+const gpio = require('./gpio');
+const sensor = require('./sensor');
+const alerts = require('./alerts');
+const scheduler = require('./scheduler');
+
+const statusRoutes = require('./routes/status');
+const deviceRoutes = require('./routes/devices');
+const scheduleRoutes = require('./routes/schedule');
+const readingsRoutes = require('./routes/readings');
+const alertsRoutes = require('./routes/alerts');
+const settingsRoutes = require('./routes/settings');
+const testRoutes = require('./routes/test');
+
+async function main() {
+  db.init();
+  gpio.init();
+  sensor.setAlerts(alerts);
+
+  const app = express();
+  app.use(express.json({ limit: '64kb' }));
+
+  app.use('/api', statusRoutes);
+  app.use('/api', deviceRoutes);
+  app.use('/api', scheduleRoutes);
+  app.use('/api', readingsRoutes);
+  app.use('/api', alertsRoutes);
+  app.use('/api', settingsRoutes);
+  app.use('/api', testRoutes);
+
+  const publicDir = path.join(__dirname, 'public');
+  app.use(express.static(publicDir));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/ws')) return next();
+    res.sendFile(path.join(publicDir, 'index.html'), (err) => {
+      if (err) next();
+    });
+  });
+
+  app.use((err, _req, res, _next) => {
+    console.error('[http] error:', err);
+    res.status(500).json({ error: err.message || 'internal error' });
+  });
+
+  const server = http.createServer(app);
+  ws.attach(server);
+
+  scheduler.reload();
+  sensor.start();
+
+  server.listen(config.PORT, () => {
+    console.log(`[server] listening on :${config.PORT} (gpioMock=${gpio.isMock()})`);
+  });
+
+  const shutdown = (signal) => {
+    console.log(`[server] ${signal} received — shutting down`);
+    try {
+      sensor.stop();
+      scheduler.shutdown();
+      gpio.cleanup();
+    } finally {
+      server.close(() => process.exit(0));
+      // Safety: force exit after 5s if server.close hangs
+      setTimeout(() => process.exit(0), 5000).unref();
+    }
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('uncaughtException', (err) => {
+    console.error('[server] uncaughtException:', err);
+    gpio.cleanup();
+    process.exit(1);
+  });
+}
+
+main().catch((err) => {
+  console.error('[server] fatal:', err);
+  try {
+    gpio.cleanup();
+  } catch {
+    // ignore
+  }
+  process.exit(1);
+});
