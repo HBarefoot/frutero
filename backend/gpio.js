@@ -71,7 +71,7 @@ function writePin(device, on) {
   }
 }
 
-function applyState(device, on, trigger) {
+function applyState(device, on, trigger, userId = null) {
   writePin(device, on);
   state[device] = on;
 
@@ -82,7 +82,7 @@ function applyState(device, on, trigger) {
   }
 
   try {
-    Q.insertDeviceLog(device, on, trigger);
+    Q.insertDeviceLog(device, on, trigger, userId);
   } catch (err) {
     console.error('[gpio] device log insert failed:', err);
   }
@@ -95,12 +95,12 @@ function applyState(device, on, trigger) {
   return { device, state: on, trigger };
 }
 
-function setFan(on, trigger = 'manual') {
-  return applyState('fan', !!on, trigger);
+function setFan(on, trigger = 'manual', userId = null) {
+  return applyState('fan', !!on, trigger, userId);
 }
 
-function setLight(on, trigger = 'manual') {
-  return applyState('light', !!on, trigger);
+function setLight(on, trigger = 'manual', userId = null) {
+  return applyState('light', !!on, trigger, userId);
 }
 
 function getFanState() {

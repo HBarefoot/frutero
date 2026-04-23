@@ -104,12 +104,12 @@ function nextInvocations() {
   return out;
 }
 
-function runTimedTest(device, durationSec) {
+function runTimedTest(device, durationSec, userId = null) {
   const setter = device === 'fan' ? gpio.setFan : gpio.setLight;
-  setter(true, 'api');
+  setter(true, 'api', userId);
   setTimeout(() => {
     try {
-      setter(false, 'api');
+      setter(false, 'api', userId);
     } catch (err) {
       console.error('[scheduler] test auto-off failed:', err);
     }

@@ -1,12 +1,23 @@
 const { WebSocketServer } = require('ws');
+const auth = require('./auth');
 
 let wss;
 const clients = new Set();
 
 function attach(server) {
-  wss = new WebSocketServer({ server, path: '/ws' });
+  wss = new WebSocketServer({
+    server,
+    path: '/ws',
+    verifyClient: (info, cb) => {
+      const sess = auth.resolveSessionFromHeader(info.req.headers.cookie);
+      if (!sess) return cb(false, 401, 'Unauthorized');
+      info.req.user = sess.user;
+      cb(true);
+    },
+  });
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
+    ws.user = req.user || null;
     clients.add(ws);
     ws.isAlive = true;
 
