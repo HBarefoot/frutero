@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { clearOverride, runTest, setFan, setLight } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { formatDateTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 
@@ -31,6 +32,8 @@ export function DeviceCard({
 }) {
   const meta = DEVICE_META[device];
   const Icon = meta.icon;
+  const { can } = useAuth();
+  const readOnly = !can('mutate');
   const [busy, setBusy] = useState(false);
 
   async function toggle() {
@@ -87,7 +90,7 @@ export function DeviceCard({
           </div>
           <Switch
             checked={on}
-            disabled={busy || disabled}
+            disabled={busy || disabled || readOnly}
             onCheckedChange={toggle}
             aria-label={`Toggle ${meta.label.toLowerCase()}`}
           />
@@ -106,20 +109,27 @@ export function DeviceCard({
             )}
           </div>
           <div className="flex items-center gap-1">
-            {manualOverride && (
+            {readOnly && (
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                read-only
+              </span>
+            )}
+            {!readOnly && manualOverride && (
               <Button variant="ghost" size="sm" onClick={releaseOverride}>
                 clear override
               </Button>
             )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={test}
-              disabled={busy || disabled}
-            >
-              <Play />
-              Test&nbsp;5s
-            </Button>
+            {!readOnly && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={test}
+                disabled={busy || disabled}
+              >
+                <Play />
+                Test&nbsp;5s
+              </Button>
+            )}
           </div>
         </div>
 
