@@ -7,6 +7,32 @@ const DEFAULT_RES = '640x480';
 const DEFAULT_FPS = 10;
 const DEFAULT_QUALITY = 7; // ffmpeg -q:v scale (lower = better)
 
+// UVC webcams enforce single-reader: only one process can hold /dev/videoN
+// at a time. When the user toggles stream → snapshot the kernel takes a
+// moment to release the device after SIGTERM, so a naive spawn races with
+// the outgoing ffmpeg and hits EBUSY. We serialize all camera spawns here:
+// a new request waits for any live ffmpeg to exit before opening.
+let current = null; // { proc, exited: Promise<void> }
+
+function killCurrent() {
+  if (!current) return Promise.resolve();
+  const c = current;
+  current = null;
+  try { c.proc.kill('SIGTERM'); } catch { /* ignore */ }
+  return c.exited;
+}
+
+function trackFfmpeg(proc) {
+  const exited = new Promise((resolve) => {
+    proc.once('exit', resolve);
+  });
+  current = { proc, exited };
+  proc.once('exit', () => {
+    if (current && current.proc === proc) current = null;
+  });
+  return exited;
+}
+
 // The USB camera is independent of GPIO — reading from /dev/videoN never
 // affects relays or sensors, so we don't gate it on GPIO_STUB. Stub mode
 // triggers only when the configured device doesn't exist or isn't readable,
@@ -55,7 +81,7 @@ function stubFrame(message = 'Stub mode — no live feed') {
   );
 }
 
-function snapshot(res) {
+async function snapshot(res) {
   const cfg = settings();
   if (!deviceExists(cfg.device)) {
     res.set('Content-Type', 'image/svg+xml');
@@ -63,6 +89,11 @@ function snapshot(res) {
     res.send(stubFrame(`No camera at ${cfg.device}`));
     return;
   }
+
+  // Wait for any previous stream/snapshot to fully release the device
+  // before opening a new ffmpeg. Without this a stream→snapshot toggle
+  // races and hits EBUSY.
+  await killCurrent();
 
   const ff = spawn(
     'ffmpeg',
@@ -78,6 +109,7 @@ function snapshot(res) {
     ],
     { stdio: ['ignore', 'pipe', 'pipe'] }
   );
+  trackFfmpeg(ff);
 
   let responded = false;
   res.set('Content-Type', 'image/jpeg');
@@ -101,7 +133,7 @@ function snapshot(res) {
   });
 }
 
-function stream(req, res) {
+async function stream(req, res) {
   const cfg = settings();
   if (!deviceExists(cfg.device)) {
     // Single placeholder frame — an <img> tag will render it as a static image.
@@ -110,6 +142,10 @@ function stream(req, res) {
     res.send(stubFrame(`No camera at ${cfg.device}`));
     return;
   }
+
+  // Same reason as snapshot: let the outgoing ffmpeg (if any) release the
+  // UVC device before we open a new one.
+  await killCurrent();
 
   const ff = spawn(
     'ffmpeg',
@@ -125,6 +161,7 @@ function stream(req, res) {
     ],
     { stdio: ['ignore', 'pipe', 'pipe'] }
   );
+  trackFfmpeg(ff);
 
   res.set('Content-Type', 'multipart/x-mixed-replace; boundary=ffmpeg');
   res.set('Cache-Control', 'no-store');
