@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Menu, Wifi, WifiOff, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { UserMenu } from '@/components/layout/user-menu';
 import { useStatus } from '@/lib/status-context';
 import { formatUptime } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -53,6 +54,7 @@ export function Topbar({ onOpenNav }) {
           <span className="hidden font-mono text-xs text-muted-foreground sm:inline">
             {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </span>
+          <UserMenu />
         </div>
       </div>
 

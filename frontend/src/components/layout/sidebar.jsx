@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useAuth } from '@/lib/auth-context';
 import { cn } from '@/lib/cn';
 
 const PRIMARY_NAV = [
@@ -27,11 +28,12 @@ const PRIMARY_NAV = [
 
 const COMING_SOON_NAV = [
   { label: 'Live Camera', icon: Camera },
-  { label: 'Team', icon: Users },
   { label: 'Setup', icon: Settings },
 ];
 
 export function Sidebar({ open, onClose }) {
+  const { user } = useAuth();
+  const isOwner = user?.role === 'owner';
   return (
     <>
       {/* Mobile backdrop */}
@@ -70,6 +72,12 @@ export function Sidebar({ open, onClose }) {
               <NavItem key={item.to} {...item} onNavigate={onClose} />
             ))}
           </NavSection>
+
+          {isOwner && (
+            <NavSection label="Admin">
+              <NavItem to="/team" label="Team" icon={Users} onNavigate={onClose} />
+            </NavSection>
+          )}
 
           <NavSection label="Coming soon">
             {COMING_SOON_NAV.map((item) => (

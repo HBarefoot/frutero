@@ -3,7 +3,65 @@ import axios from 'axios';
 export const api = axios.create({
   baseURL: '/api',
   timeout: 10000,
+  withCredentials: true,
 });
+
+// --- Auth -----------------------------------------------------------
+export async function fetchBootstrap() {
+  return (await api.get('/auth/bootstrap')).data;
+}
+export async function fetchMe() {
+  return (await api.get('/auth/me')).data;
+}
+export async function loginRequest({ email, password }) {
+  return (await api.post('/auth/login', { email, password })).data;
+}
+export async function logoutRequest() {
+  return (await api.post('/auth/logout')).data;
+}
+export async function setupOwner({ email, name, password }) {
+  return (await api.post('/auth/setup', { email, name, password })).data;
+}
+export async function inspectInvite(token) {
+  return (await api.get(`/auth/invite/${encodeURIComponent(token)}`)).data;
+}
+export async function acceptInvite(token, { name, password }) {
+  return (
+    await api.post(`/auth/invite/${encodeURIComponent(token)}/accept`, {
+      name,
+      password,
+    })
+  ).data;
+}
+
+// --- Users (owner-only) ---------------------------------------------
+export async function fetchUsers() {
+  return (await api.get('/users')).data;
+}
+export async function updateUserRole(id, role) {
+  return (await api.patch(`/users/${id}/role`, { role })).data;
+}
+export async function setUserDisabled(id, disabled) {
+  return (await api.patch(`/users/${id}/disabled`, { disabled })).data;
+}
+export async function deleteUserRequest(id) {
+  return (await api.delete(`/users/${id}`)).data;
+}
+export async function revokeUserSessions(id) {
+  return (await api.post(`/users/${id}/revoke-sessions`)).data;
+}
+export async function fetchInvites() {
+  return (await api.get('/invites')).data;
+}
+export async function createInvite({ email, role }) {
+  return (await api.post('/invites', { email, role })).data;
+}
+export async function revokeInvite(token) {
+  return (await api.delete(`/invites/${encodeURIComponent(token)}`)).data;
+}
+export async function fetchAuditLog(limit = 100) {
+  return (await api.get('/audit', { params: { limit } })).data;
+}
 
 export async function fetchStatus() {
   return (await api.get('/status')).data;
