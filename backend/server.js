@@ -34,7 +34,9 @@ async function main() {
   app.use('/api', settingsRoutes);
   app.use('/api', testRoutes);
 
-  const publicDir = path.join(__dirname, 'public');
+  const publicDir = path.isAbsolute(config.PUBLIC_DIR)
+    ? config.PUBLIC_DIR
+    : path.join(__dirname, config.PUBLIC_DIR);
   app.use(express.static(publicDir));
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/ws')) return next();

@@ -33,6 +33,11 @@ module.exports = {
 
   DB_PATH: process.env.DB_PATH || path.join(__dirname, 'mushroom.db'),
 
+  // Static asset dir. Default 'public' keeps prod pointing at the baked-in
+  // build; dev:stub sets this to ../frontend/dist so it serves the latest
+  // Vite build without overwriting what prod is serving.
+  PUBLIC_DIR: process.env.PUBLIC_DIR || 'public',
+
   ALERT_DEBOUNCE_MS: 5 * 60 * 1000,
   WARNING_MARGIN: 0.05,
 
