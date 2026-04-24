@@ -147,6 +147,11 @@ async function stream(req, res) {
   // UVC device before we open a new one.
   await killCurrent();
 
+  // Self-terminate streams after 15 min even if the client keeps the
+  // connection open. A forgotten background tab otherwise pins ffmpeg
+  // + the USB bandwidth indefinitely. Viewers that are still live
+  // reconnect automatically via the browser's <img> reload path.
+  const MAX_STREAM_SECONDS = 900;
   const ff = spawn(
     'ffmpeg',
     [
@@ -155,6 +160,7 @@ async function stream(req, res) {
       '-video_size', cfg.resolution,
       '-framerate', String(cfg.fps),
       '-i', cfg.device,
+      '-t', String(MAX_STREAM_SECONDS),
       '-q:v', String(cfg.quality),
       '-f', 'mpjpeg',
       '-',

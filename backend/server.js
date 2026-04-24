@@ -129,7 +129,19 @@ async function main() {
   const publicDir = path.isAbsolute(config.PUBLIC_DIR)
     ? config.PUBLIC_DIR
     : path.join(__dirname, config.PUBLIC_DIR);
-  app.use(express.static(publicDir));
+  // Hash-suffixed assets (Vite emits /assets/<name>-<hash>.<ext>) never
+  // change content for a given URL, so the browser can cache them
+  // aggressively. HTML shells get no-cache so users always land on the
+  // latest shell that references the correct hashed asset URLs.
+  app.use(express.static(publicDir, {
+    setHeaders: (res, filePath) => {
+      if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+    },
+  }));
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/ws')) return next();
     res.sendFile(path.join(publicDir, 'index.html'), (err) => {
