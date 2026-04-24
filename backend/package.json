@@ -11,6 +11,7 @@
     "seed": "node scripts/seed.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.91.0",
     "@iiot2k/gpiox": "^3.0.6",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^11.3.0",

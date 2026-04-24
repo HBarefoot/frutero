@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom';
 import {
   Activity,
   Bell,
+  Brain,
   CalendarClock,
   Camera,
   Cpu,
@@ -26,6 +27,7 @@ const PRIMARY_NAV = [
   { to: '/alerts', label: 'Alerts', icon: Bell },
   { to: '/activity', label: 'Activity', icon: Activity },
   { to: '/species', label: 'Species', icon: Leaf },
+  { to: '/ai', label: 'AI advisor', icon: Brain },
 ];
 
 export function Sidebar({ open, onClose }) {

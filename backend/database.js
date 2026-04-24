@@ -148,6 +148,30 @@ function init() {
 
     CREATE INDEX IF NOT EXISTS idx_client_errors_timestamp ON client_errors(timestamp);
 
+    -- AI advisor insights. Claude or Ollama reviews chamber state on a
+    -- schedule and emits recommendations. Never actuates devices — owner
+    -- reviews and applies manually.
+    CREATE TABLE IF NOT EXISTS ai_insights (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      provider TEXT NOT NULL,
+      model TEXT,
+      category TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      actions TEXT,
+      status TEXT NOT NULL DEFAULT 'new',
+      status_changed_at DATETIME,
+      status_changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      latency_ms INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ai_insights_timestamp ON ai_insights(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_ai_insights_status ON ai_insights(status);
+
     -- Generic actuator registry. Replaces hardcoded fan/light pin config.
     -- key is referenced by schedules.device and device_log.device.
     CREATE TABLE IF NOT EXISTS actuators (
@@ -642,6 +666,63 @@ const Q = {
     return getDb()
       .prepare('INSERT OR REPLACE INTO secrets (key, value) VALUES (?, ?)')
       .run(key, value);
+  },
+
+  deleteSecret(key) {
+    return getDb().prepare('DELETE FROM secrets WHERE key = ?').run(key);
+  },
+
+  // AI insights
+  insertAIInsight({ provider, model, category, severity, title, body, actions, input_tokens, output_tokens, latency_ms }) {
+    return getDb()
+      .prepare(
+        `INSERT INTO ai_insights
+           (provider, model, category, severity, title, body, actions,
+            input_tokens, output_tokens, latency_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        provider,
+        model || null,
+        category,
+        severity,
+        title,
+        body,
+        actions ? JSON.stringify(actions) : null,
+        input_tokens ?? null,
+        output_tokens ?? null,
+        latency_ms ?? null,
+      );
+  },
+
+  listAIInsights(limit = 50) {
+    return getDb()
+      .prepare(
+        `SELECT id, timestamp, provider, model, category, severity, title, body, actions,
+                status, status_changed_at, status_changed_by,
+                input_tokens, output_tokens, latency_ms
+         FROM ai_insights
+         ORDER BY timestamp DESC
+         LIMIT ?`
+      )
+      .all(limit)
+      .map((r) => ({ ...r, actions: r.actions ? JSON.parse(r.actions) : [] }));
+  },
+
+  updateAIInsightStatus(id, status, user_id) {
+    return getDb()
+      .prepare(
+        `UPDATE ai_insights
+         SET status = ?, status_changed_at = CURRENT_TIMESTAMP, status_changed_by = ?
+         WHERE id = ?`
+      )
+      .run(status, user_id, id);
+  },
+
+  countAIInsights(hours = 24) {
+    return getDb()
+      .prepare(`SELECT COUNT(*) AS n FROM ai_insights WHERE timestamp >= datetime('now', ?)`)
+      .get(`-${hours} hours`).n;
   },
 
   deleteSessionsForUserExcept(user_id, keepToken) {

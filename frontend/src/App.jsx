@@ -28,6 +28,7 @@ const AuditPage = lazy(() => import('@/pages/audit'));
 const AccountPage = lazy(() => import('@/pages/account'));
 const CameraPage = lazy(() => import('@/pages/camera'));
 const SecurityPage = lazy(() => import('@/pages/security'));
+const AIPage = lazy(() => import('@/pages/ai'));
 
 // Lightweight skeleton shown while the lazy chunk loads. Kept minimal
 // on purpose — even a slow LTE chunk resolves in ~200ms, so anything
@@ -86,6 +87,7 @@ export default function App() {
               <Route path="/account" element={page(<AccountPage />)} />
               <Route path="/camera" element={page(<CameraPage />)} />
               <Route path="/security" element={page(<SecurityPage />)} />
+              <Route path="/ai" element={page(<AIPage />)} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>

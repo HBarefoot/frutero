@@ -102,6 +102,23 @@ export async function fetchHostStats() {
   return (await api.get('/hardware/host')).data;
 }
 
+// --- AI advisor ------------------------------------------------------
+export async function fetchAIConfig() {
+  return (await api.get('/ai/config')).data;
+}
+export async function saveAIConfig(patch) {
+  return (await api.put('/ai/config', patch)).data;
+}
+export async function fetchAIInsights(limit = 50) {
+  return (await api.get('/ai/insights', { params: { limit } })).data;
+}
+export async function updateAIInsight(id, status) {
+  return (await api.patch(`/ai/insights/${id}`, { status })).data;
+}
+export async function runAIAdvisor() {
+  return (await api.post('/ai/run')).data;
+}
+
 export async function fetchStatus() {
   return (await api.get('/status')).data;
 }

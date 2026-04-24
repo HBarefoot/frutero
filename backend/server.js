@@ -34,6 +34,8 @@ const cameraRoutes = require('./routes/camera');
 const securityRoutes = require('./routes/security');
 const clientErrorsRoutes = require('./routes/client-errors');
 const backupRoutes = require('./routes/backup');
+const aiRoutes = require('./routes/ai');
+const aiAdvisor = require('./ai/advisor');
 
 async function main() {
   db.init();
@@ -125,6 +127,7 @@ async function main() {
   app.use('/api', usersRoutes);
   app.use('/api', securityRoutes);
   app.use('/api', clientErrorsRoutes);
+  app.use('/api', aiRoutes);
 
   const publicDir = path.isAbsolute(config.PUBLIC_DIR)
     ? config.PUBLIC_DIR
@@ -179,6 +182,10 @@ async function main() {
   // needs restoring. Pulse devices are intentionally excluded inside.
   gpio.restoreScheduledStates(scheduler);
   sensor.start();
+  // AI advisor runs every cadence_hours (default 6h). Only actually
+  // fires when `ai_enabled=1` AND a provider is configured. Safe to
+  // start unconditionally.
+  aiAdvisor.startScheduler();
 
   const primaryPort = tlsActive ? config.HTTPS_PORT : config.PORT;
   primaryServer.listen(primaryPort, () => {
