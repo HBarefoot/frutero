@@ -247,6 +247,16 @@ async function enroll({ url, code, name }) {
   db.Q.setSecret('fleet_jwt', body.jwt);
   db.Q.setSecret('fleet_chamber_id', String(body.chamber_id));
   db.Q.setSecret('fleet_name', body.name || cleanName);
+
+  // Default-on the cloud notify channel for first-time enrollments so
+  // alerts start flowing to the cloud inbox immediately. We only flip
+  // the bit when the operator hasn't expressed a preference yet —
+  // re-enrollment after a deliberate disable preserves that choice.
+  const settings = db.Q.getAllSettings();
+  if (settings.notify_cloud_enabled === undefined) {
+    db.Q.setSetting('notify_cloud_enabled', '1');
+  }
+
   lastError = null;
   lastHeartbeatAt = null;
   start();

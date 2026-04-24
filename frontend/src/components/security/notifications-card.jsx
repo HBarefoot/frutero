@@ -3,6 +3,7 @@ import {
   Bell,
   CheckCircle2,
   CircleSlash,
+  Cloud,
   Loader2,
   Mail,
   MessageCircle,
@@ -36,6 +37,7 @@ const EMPTY_FORM = {
   email: { enabled: false, host: '', port: 587, secure: false, user: '', password: '', from: '', to: '' },
   webhook: { enabled: false, style: 'generic', url: '' },
   push: { enabled: false },
+  cloud: { enabled: false },
 };
 
 export function NotificationsCard() {
@@ -64,6 +66,7 @@ export function NotificationsCard() {
         },
         webhook: { enabled: c.webhook.enabled, style: c.webhook.style, url: '' },
         push: { enabled: !!c.push?.enabled },
+        cloud: { enabled: !!c.cloud?.enabled },
       });
     } catch (err) {
       toast.error(err);
@@ -393,6 +396,39 @@ export function NotificationsCard() {
             Account page; push respects the same min-severity filter as email/Telegram.
             Self-signed HTTPS works after the client accepts the cert — Safari does not.
           </p>
+        </ChannelSection>
+
+        <ChannelSection
+          icon={Cloud}
+          label="Cloud (frutero-fleet)"
+          enabled={form.cloud.enabled}
+          hasCredential={!!config.cloud?.enrolled}
+          credentialLabel="Enrolled"
+          onToggle={(v) => {
+            setForm({ ...form, cloud: { enabled: v } });
+            savePatch({ cloud: { enabled: v } });
+          }}
+          onTest={() => runTest('cloud')}
+          testing={testing === 'cloud'}
+          busy={busy}
+        >
+          <p className="text-[11px] text-muted-foreground">
+            Forwards alerts to the cloud control plane so you can see urgent
+            events across every chamber from one inbox. Requires the Pi to be
+            enrolled (configure on the Fleet card above). Re-fires of the same
+            condition UPSERT in place rather than spamming the inbox.
+          </p>
+          {config.cloud?.enrolled && config.cloud.url && (
+            <p className="text-[11px] text-muted-foreground">
+              Posting to <span className="font-mono">{config.cloud.url}</span> as chamber #{config.cloud.chamber_id}.
+            </p>
+          )}
+          {!config.cloud?.enrolled && (
+            <p className="text-[11px] text-warning">
+              Not enrolled. Use the Fleet card on this page to connect a cloud
+              instance before enabling this channel.
+            </p>
+          )}
         </ChannelSection>
       </CardContent>
     </Card>
