@@ -1,6 +1,7 @@
 const config = require('./config');
 const ws = require('./ws');
 const { Q } = require('./database');
+const batches = require('./batches');
 
 let alerts = null;       // set lazily to avoid circular require
 let automations = null;  // set lazily for the same reason
@@ -101,7 +102,7 @@ async function tick() {
   lastSuccessAt = Date.now();
 
   try {
-    Q.insertReading(reading.temperature, reading.humidity, reading.simulated);
+    Q.insertReading(reading.temperature, reading.humidity, reading.simulated, batches.getActiveBatchId());
   } catch (err) {
     console.error('[sensor] db insert failed:', err);
   }

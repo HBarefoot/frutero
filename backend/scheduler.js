@@ -94,6 +94,27 @@ function reload() {
   const rows = Q.listEnabledSchedules();
   for (const row of rows) register(row);
   console.log(`[scheduler] loaded ${jobs.size} schedule(s)`);
+  registerInternalJobs();
+}
+
+// Internal (non-DB) jobs the backend always wants running. Re-registered
+// whenever the user's schedule set reloads so they stay alive.
+let internalJobsRegistered = false;
+function registerInternalJobs() {
+  if (internalJobsRegistered) return;
+  internalJobsRegistered = true;
+  // Nightly readings rollup at 03:00 local. Keeps the readings table
+  // bounded (30d raw, 1y at 1-minute, forever at 1-hour).
+  schedule.scheduleJob('0 3 * * *', () => {
+    try {
+      const r = Q.rollupReadings();
+      console.log(
+        `[scheduler] rolled up readings: ${r.rolled_1min} 1m + ${r.rolled_1hour} 1h, pruned ${r.pruned_raw} raw + ${r.pruned_1min} 1m`
+      );
+    } catch (err) {
+      console.error('[scheduler] rollup failed:', err);
+    }
+  });
 }
 
 function nextInvocations() {

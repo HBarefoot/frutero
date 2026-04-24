@@ -8,6 +8,7 @@ import { DeviceCard } from '@/components/dashboard/device-card';
 import { LiveChart } from '@/components/dashboard/live-chart';
 import { ActivityFeed } from '@/components/dashboard/activity-feed';
 import { ActiveBatchCard } from '@/components/dashboard/active-batch-card';
+import { AIInsightsWidget } from '@/components/dashboard/ai-insights-widget';
 import { PageSkeleton } from '@/components/ui/skeleton';
 import { useStatus } from '@/lib/status-context';
 import { cn } from '@/lib/cn';
@@ -51,7 +52,10 @@ export default function DashboardPage() {
       />
 
       <div className="space-y-6">
-        <ActiveBatchCard />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <ActiveBatchCard />
+          <AIInsightsWidget />
+        </div>
         <SensorCards sensor={status.sensor} sensorHealth={status.sensor_health} alerts={alerts} />
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

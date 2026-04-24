@@ -207,6 +207,23 @@ function init() {
 
     CREATE INDEX IF NOT EXISTS idx_batch_events_batch ON batch_events(batch_id);
 
+    -- Phase 8 M3: downsampled sensor readings so the DB doesn't grow
+    -- unbounded. The raw readings table stays at per-tick resolution
+    -- for ~30 days; the nightly rollup in scheduler.js fills these
+    -- tables and prunes the raw table.
+    CREATE TABLE IF NOT EXISTS readings_1min (
+      bucket DATETIME PRIMARY KEY,
+      temp_min REAL, temp_max REAL, temp_avg REAL,
+      humid_min REAL, humid_max REAL, humid_avg REAL,
+      samples INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS readings_1hour (
+      bucket DATETIME PRIMARY KEY,
+      temp_min REAL, temp_max REAL, temp_avg REAL,
+      humid_min REAL, humid_max REAL, humid_avg REAL,
+      samples INTEGER NOT NULL
+    );
+
     -- Generic actuator registry. Replaces hardcoded fan/light pin config.
     -- key is referenced by schedules.device and device_log.device.
     CREATE TABLE IF NOT EXISTS actuators (
@@ -233,6 +250,8 @@ function init() {
   ensureColumn('ai_insights', 'batch_id', 'INTEGER REFERENCES batches(id) ON DELETE SET NULL');
   // Phase 8 M2: per-batch notification muting. Defaults to 0 (not muted).
   ensureColumn('batches', 'notifications_muted', 'INTEGER NOT NULL DEFAULT 0');
+  // Phase 8 M3: attach sensor readings to a batch for per-batch stats.
+  ensureColumn('readings', 'batch_id', 'INTEGER REFERENCES batches(id) ON DELETE SET NULL');
 
   seedIfEmpty();
   seedActuatorsIfEmpty();
@@ -356,14 +375,48 @@ function getDb() {
 }
 
 const Q = {
-  insertReading(temperature, humidity, simulated) {
+  insertReading(temperature, humidity, simulated, batchId = null) {
     return getDb()
-      .prepare('INSERT INTO readings (temperature, humidity, simulated) VALUES (?, ?, ?)')
-      .run(temperature, humidity, simulated ? 1 : 0);
+      .prepare('INSERT INTO readings (temperature, humidity, simulated, batch_id) VALUES (?, ?, ?, ?)')
+      .run(temperature, humidity, simulated ? 1 : 0, batchId);
   },
 
+  // Tiered time-series query. Picks the right table by window:
+  //   ≤ 24h   → raw readings (per-sensor-tick resolution)
+  //   ≤ 30d   → readings_1min (1-minute buckets)
+  //   > 30d   → readings_1hour
+  // Falls back to raw if the rollup tier is empty (fresh install,
+  // pre-first-rollup). Returned shape matches the raw table's field
+  // names so existing chart code works unchanged.
   getReadings(hours) {
-    return getDb()
+    const db = getDb();
+    if (hours <= 24) {
+      return db
+        .prepare(
+          `SELECT id, timestamp, temperature, humidity, simulated
+           FROM readings
+           WHERE timestamp >= datetime('now', ?)
+           ORDER BY timestamp ASC`
+        )
+        .all(`-${hours} hours`);
+    }
+
+    const tier = hours <= 24 * 30 ? 'readings_1min' : 'readings_1hour';
+    const rows = db
+      .prepare(
+        `SELECT bucket AS timestamp, temp_avg AS temperature, humid_avg AS humidity,
+                temp_min, temp_max, humid_min, humid_max, samples
+         FROM ${tier}
+         WHERE bucket >= datetime('now', ?)
+         ORDER BY bucket ASC`
+      )
+      .all(`-${hours} hours`);
+    if (rows.length > 0) return rows;
+
+    // Fallback: rollup tier empty (brand-new install, first rollup job
+    // hasn't run yet). Serve raw for the window anyway so charts aren't
+    // blank while waiting for 03:00.
+    return db
       .prepare(
         `SELECT id, timestamp, temperature, humidity, simulated
          FROM readings
@@ -371,6 +424,57 @@ const Q = {
          ORDER BY timestamp ASC`
       )
       .all(`-${hours} hours`);
+  },
+
+  // Used by the nightly rollup job.
+  rollupReadings() {
+    const db = getDb();
+    // Aggregate anything in raw that isn't yet in the 1min rollup
+    // (bucket already covered), up to 'now - 1 minute' so we don't
+    // consume partial buckets.
+    const inserted1min = db.prepare(`
+      INSERT OR REPLACE INTO readings_1min
+        (bucket, temp_min, temp_max, temp_avg, humid_min, humid_max, humid_avg, samples)
+      SELECT
+        strftime('%Y-%m-%d %H:%M:00', timestamp) AS bucket,
+        MIN(temperature), MAX(temperature), AVG(temperature),
+        MIN(humidity), MAX(humidity), AVG(humidity),
+        COUNT(*)
+      FROM readings
+      WHERE timestamp < datetime('now', '-1 minute')
+      GROUP BY bucket
+    `).run().changes;
+
+    const inserted1hour = db.prepare(`
+      INSERT OR REPLACE INTO readings_1hour
+        (bucket, temp_min, temp_max, temp_avg, humid_min, humid_max, humid_avg, samples)
+      SELECT
+        strftime('%Y-%m-%d %H:00:00', bucket) AS hour_bucket,
+        MIN(temp_min), MAX(temp_max),
+        SUM(temp_avg * samples) / NULLIF(SUM(samples), 0),
+        MIN(humid_min), MAX(humid_max),
+        SUM(humid_avg * samples) / NULLIF(SUM(samples), 0),
+        SUM(samples)
+      FROM readings_1min
+      WHERE bucket < datetime('now', '-1 hour')
+      GROUP BY hour_bucket
+    `).run().changes;
+
+    // Prune raw older than 30 days — rollups have captured it.
+    const pruned = db.prepare(
+      `DELETE FROM readings WHERE timestamp < datetime('now', '-30 days')`
+    ).run().changes;
+    // Prune 1min older than 1 year — rolled up to 1hour by now.
+    const pruned1min = db.prepare(
+      `DELETE FROM readings_1min WHERE bucket < datetime('now', '-365 days')`
+    ).run().changes;
+
+    return {
+      rolled_1min: inserted1min,
+      rolled_1hour: inserted1hour,
+      pruned_raw: pruned,
+      pruned_1min: pruned1min,
+    };
   },
 
   getReadingStats(hours) {
