@@ -1,5 +1,6 @@
 const { Q } = require('./database');
 const gpio = require('./gpio');
+const sensor = require('./sensor');
 
 // Per-actuator debounce so we don't re-fire a humidity-driven mist every
 // sensor tick while humidity is below threshold.
@@ -30,6 +31,16 @@ function onSensorReading(reading) {
   if (gpio.isManualOverride(cfg.key)) return;
   if (!Number.isFinite(cfg.threshold) || cfg.threshold <= 0 || cfg.threshold > 100) return;
   if (reading.humidity >= cfg.threshold) return;
+
+  // Belt-and-braces: if the sensor has stopped responding, never fire
+  // the mister based on a stale reading. The watchdog in sensor.js
+  // raises a silence alert separately; this guard just prevents the
+  // atomizer from running while the operator investigates.
+  const health = sensor.getHealth();
+  if (health.silent) {
+    console.log(`[automations] mister fire suppressed — sensor silent for ${health.silent_seconds}s`);
+    return;
+  }
 
   const last = lastFireAt.get(cfg.key) || 0;
   if (Date.now() - last < RECHECK_MS) return;

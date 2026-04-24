@@ -86,8 +86,45 @@ async function sendTelegram(message) {
   }
 }
 
+// Sensor silence alert: distinct key from temp/humidity so its debounce
+// doesn't collide. Thirty-minute debounce means we don't spam the
+// grower every minute while the sensor is dead — one alert, then quiet
+// until the situation resolves or 30 min elapses.
+const SILENCE_DEBOUNCE_MS = 30 * 60 * 1000;
+
+function fireSilence(silentSeconds) {
+  const key = 'sensor:silence';
+  const now = Date.now();
+  const last = lastAlertAt.get(key) || 0;
+  if (now - last < SILENCE_DEBOUNCE_MS) return;
+  lastAlertAt.set(key, now);
+
+  const minutes = Math.floor(silentSeconds / 60);
+  const message = `sensor silent for ${minutes}m — humidity automation suspended`;
+
+  try {
+    Q.insertAlertHistory('sensor', null, null, message);
+  } catch (err) {
+    console.error('[alerts] silence history insert failed:', err);
+  }
+
+  ws.broadcast({
+    type: 'alert',
+    data: {
+      metric: 'sensor',
+      side: 'silence',
+      value: null,
+      threshold: null,
+      message,
+      timestamp: new Date().toISOString(),
+    },
+  });
+
+  sendTelegram(message);
+}
+
 function recent(limit = 10) {
   return Q.getAlertHistory(limit);
 }
 
-module.exports = { check, recent, sendTelegram };
+module.exports = { check, fireSilence, recent, sendTelegram };

@@ -14,6 +14,7 @@ router.get('/status', (_req, res) => {
   res.json({
     actuators,
     sensor: sensor.getLatest(),
+    sensor_health: sensor.getHealth(),
     uptime: Math.floor((Date.now() - startedAt) / 1000),
     gpioMock: gpio.isMock(),
     nextInvocations: scheduler.nextInvocations(),

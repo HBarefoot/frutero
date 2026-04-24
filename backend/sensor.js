@@ -6,7 +6,17 @@ let alerts = null;       // set lazily to avoid circular require
 let automations = null;  // set lazily for the same reason
 let realSensor = null;
 let intervalHandle = null;
+let watchdogHandle = null;
 const latest = { temperature: null, humidity: null, simulated: true, timestamp: null };
+
+// Separate from `latest.timestamp` — survives failed reads. Used to
+// compute how long we've been without a real value and drive the
+// silence watchdog + mister-automation safety gate.
+let lastSuccessAt = 0;
+
+// If the last good reading is this old AND the sensor isn't stubbed,
+// we're "silent". Below this, stay quiet; above, fire the alert.
+const SILENCE_THRESHOLD_SEC = 10 * 60;
 
 function setAlerts(mod) {
   alerts = mod;
@@ -88,6 +98,7 @@ async function tick() {
 
   const timestamp = new Date().toISOString();
   Object.assign(latest, reading, { timestamp });
+  lastSuccessAt = Date.now();
 
   try {
     Q.insertReading(reading.temperature, reading.humidity, reading.simulated);
@@ -118,9 +129,13 @@ async function tick() {
 }
 
 function start() {
-  // Prime immediately so the first client doesn't see null.
+  // Prime immediately so the first client doesn't see null. The stub
+  // path always succeeds so lastSuccessAt is set on first tick; real
+  // hardware may need a retry loop (DHT_RETRY_DELAY_MS above).
   tick();
   intervalHandle = setInterval(tick, config.SENSOR_READ_INTERVAL * 1000);
+  // Separate watchdog — runs every minute regardless of read cadence.
+  watchdogHandle = setInterval(checkSilence, 60 * 1000);
 }
 
 function stop() {
@@ -128,10 +143,55 @@ function stop() {
     clearInterval(intervalHandle);
     intervalHandle = null;
   }
+  if (watchdogHandle) {
+    clearInterval(watchdogHandle);
+    watchdogHandle = null;
+  }
 }
 
 function getLatest() {
   return { ...latest };
 }
 
-module.exports = { start, stop, getLatest, setAlerts, setAutomations };
+// Health snapshot surfaced to status/security endpoints + automation
+// safety gate. `silent_seconds` is only meaningful once we've had at
+// least one successful read (otherwise lastSuccessAt=0 would report
+// "silent since epoch").
+function getHealth() {
+  const hasRead = lastSuccessAt > 0;
+  const silentSeconds = hasRead ? Math.floor((Date.now() - lastSuccessAt) / 1000) : null;
+  const silent = !latest.simulated && hasRead && silentSeconds >= SILENCE_THRESHOLD_SEC;
+  return {
+    ok: !silent,
+    simulated: !!latest.simulated,
+    last_success_at: hasRead ? new Date(lastSuccessAt).toISOString() : null,
+    silent_seconds: silentSeconds,
+    silence_threshold_seconds: SILENCE_THRESHOLD_SEC,
+    silent,
+  };
+}
+
+function checkSilence() {
+  // Nothing to check if we've never seen a reading, or if we're in stub
+  // mode (stub doesn't fail).
+  if (lastSuccessAt === 0) return;
+  if (latest.simulated) return;
+
+  const silentSeconds = Math.floor((Date.now() - lastSuccessAt) / 1000);
+  if (silentSeconds < SILENCE_THRESHOLD_SEC) return;
+
+  if (alerts && typeof alerts.fireSilence === 'function') {
+    try {
+      alerts.fireSilence(silentSeconds);
+    } catch (err) {
+      console.error('[sensor] fireSilence failed:', err);
+    }
+  }
+  // Broadcast a sensor_health update so the dashboard can render the
+  // warning banner immediately instead of waiting for next poll.
+  try {
+    ws.broadcast({ type: 'sensor_health', data: getHealth() });
+  } catch { /* non-fatal */ }
+}
+
+module.exports = { start, stop, getLatest, getHealth, setAlerts, setAutomations };

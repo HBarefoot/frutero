@@ -49,7 +49,7 @@ export default function DashboardPage() {
       />
 
       <div className="space-y-6">
-        <SensorCards sensor={status.sensor} alerts={alerts} />
+        <SensorCards sensor={status.sensor} sensorHealth={status.sensor_health} alerts={alerts} />
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {enabledActuators.map((a) => (

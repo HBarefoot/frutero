@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Droplets, Thermometer } from 'lucide-react';
+import { AlertTriangle, Droplets, Thermometer } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { fetchReadingStats } from '@/lib/api';
@@ -13,7 +13,7 @@ const STATUS_META = {
   unknown: { label: 'No data', variant: 'muted' },
 };
 
-export function SensorCards({ sensor, alerts }) {
+export function SensorCards({ sensor, sensorHealth, alerts }) {
   const [stats, setStats] = useState(null);
 
   useEffect(() => {
@@ -33,8 +33,24 @@ export function SensorCards({ sensor, alerts }) {
   const tempCfg = alerts?.config?.temperature;
   const humidCfg = alerts?.config?.humidity;
 
+  const silent = !!sensorHealth?.silent;
+  const silentMinutes = silent ? Math.floor((sensorHealth.silent_seconds || 0) / 60) : 0;
+
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <div className="space-y-4">
+      {silent && (
+        <div className="flex items-start gap-2 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <div>
+            <div className="font-medium">Sensor silent for {silentMinutes}m</div>
+            <div className="text-xs text-danger/80">
+              Humidity-driven mister automation is suspended. Check the DHT22 wiring
+              on GPIO {sensor?.pin ?? 'N/A'}; dashboard readings below are stale.
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <SensorCard
         label="Temperature"
         icon={Thermometer}
@@ -57,6 +73,7 @@ export function SensorCards({ sensor, alerts }) {
         updated={sensor?.timestamp}
         simulated={sensor?.simulated}
       />
+      </div>
     </div>
   );
 }
