@@ -29,10 +29,12 @@ export function Topbar({ onOpenNav }) {
     <div className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur">
       <div className="flex h-16 items-center justify-between gap-3 px-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
+          {/* Hamburger shows on tablets only. Phones use the bottom-nav
+              "More" tile; desktops see the sidebar directly. */}
           <Button
             variant="ghost"
-            size="icon-sm"
-            className="lg:hidden"
+            size="icon"
+            className="hidden md:inline-flex lg:hidden"
             onClick={onOpenNav}
             aria-label="Open navigation"
           >
