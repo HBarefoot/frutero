@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  AlertTriangle,
   Droplets,
   Fan,
   Flame,
@@ -52,14 +53,28 @@ export function DeviceCard({
   const { can } = useAuth();
   const readOnly = !can('mutate');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
 
   const subtitleText = subtitle ?? (actuator ? defaultSubtitle(actuator) : null);
+
+  function surfaceError(err) {
+    const msg =
+      err?.response?.data?.detail ||
+      err?.response?.data?.error ||
+      err?.message ||
+      'Command failed';
+    setError(msg);
+    setTimeout(() => setError(null), 5000);
+  }
 
   async function toggle() {
     if (disabled) return;
     setBusy(true);
     try {
       await setDevice(key, !isOn);
+      setError(null);
+    } catch (err) {
+      surfaceError(err);
     } finally {
       setBusy(false);
     }
@@ -70,6 +85,9 @@ export function DeviceCard({
     setBusy(true);
     try {
       await runTest(key, 5);
+      setError(null);
+    } catch (err) {
+      surfaceError(err);
     } finally {
       setBusy(false);
     }
@@ -140,6 +158,13 @@ export function DeviceCard({
             )}
           </div>
         </div>
+
+        {error && (
+          <div className="mt-3 flex items-start gap-2 rounded-md border border-danger/40 bg-danger/10 px-2.5 py-1.5 text-[11px] text-danger">
+            <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+            <span className="break-words">{error}</span>
+          </div>
+        )}
 
         {children && <div className="mt-5 space-y-3">{children}</div>}
 
