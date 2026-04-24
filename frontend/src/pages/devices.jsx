@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { PageHeader } from '@/components/layout/page-header';
 import { DeviceCard } from '@/components/dashboard/device-card';
 import { MistingPanel } from '@/components/dashboard/misting-panel';
+import { PageSkeleton } from '@/components/ui/skeleton';
 import { useStatus } from '@/lib/status-context';
 import { updateActuator } from '@/lib/api';
 
@@ -15,7 +16,7 @@ export default function DevicesPage() {
   const nextByDevice = status?.nextByDevice || {};
   const allActuators = useMemo(() => Object.values(actuators), [actuators]);
 
-  if (!status) return null;
+  if (!status) return <PageSkeleton rows={2} />;
 
   return (
     <>
@@ -27,7 +28,7 @@ export default function DevicesPage() {
       {allActuators.length === 0 ? (
         <EmptyState />
       ) : (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {allActuators.map((a) => (
             <DeviceCard
               key={a.key}

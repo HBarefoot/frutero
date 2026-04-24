@@ -7,6 +7,7 @@ import { SensorCards } from '@/components/dashboard/sensor-card';
 import { DeviceCard } from '@/components/dashboard/device-card';
 import { LiveChart } from '@/components/dashboard/live-chart';
 import { ActivityFeed } from '@/components/dashboard/activity-feed';
+import { PageSkeleton } from '@/components/ui/skeleton';
 import { useStatus } from '@/lib/status-context';
 import { cn } from '@/lib/cn';
 
@@ -33,7 +34,7 @@ export default function DashboardPage() {
     [actuators]
   );
 
-  if (!status) return <Loading />;
+  if (!status) return <PageSkeleton rows={4} />;
 
   return (
     <>
@@ -51,7 +52,7 @@ export default function DashboardPage() {
       <div className="space-y-6">
         <SensorCards sensor={status.sensor} sensorHealth={status.sensor_health} alerts={alerts} />
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {enabledActuators.map((a) => (
             <DeviceCard
               key={a.key}

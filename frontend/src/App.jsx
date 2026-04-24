@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from '@/components/layout/app-shell';
 import { AuthGate } from '@/components/auth/auth-gate';
 import { ErrorBoundary } from '@/components/error-boundary';
+import { ToastProvider } from '@/components/ui/toast';
 import { AuthProvider } from '@/lib/auth-context';
 import { StatusProvider } from '@/lib/status-context';
 
@@ -52,8 +53,9 @@ const page = (el) => (
 export default function App() {
   return (
     <ErrorBoundary scope="app">
-      <AuthProvider>
-        <BrowserRouter>
+      <ToastProvider>
+        <AuthProvider>
+          <BrowserRouter>
           <Routes>
             {/* Unauthenticated flows — eager-loaded. */}
             <Route path="/login" element={page(<LoginPage />)} />
@@ -87,8 +89,9 @@ export default function App() {
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>
-        </BrowserRouter>
-      </AuthProvider>
+          </BrowserRouter>
+        </AuthProvider>
+      </ToastProvider>
     </ErrorBoundary>
   );
 }
