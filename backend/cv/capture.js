@@ -34,6 +34,8 @@ function settingsForCapture() {
     retention_days: parseInt(s.cv_snapshots_retention_days, 10) || 30,
     auto_analyze: s.cv_auto_analyze === '1',
     analyze_every_nth: parseInt(s.cv_analyze_every_nth, 10) || 1,
+    stage_advance_enabled: s.cv_stage_advance_enabled !== '0',
+    stage_advance_threshold: Math.max(2, Math.min(10, parseInt(s.cv_stage_advance_threshold, 10) || 3)),
     device: s.camera_device || '/dev/video0',
     resolution: s.camera_resolution || DEFAULT_RES,
     quality: parseInt(s.camera_quality, 10) || DEFAULT_QUALITY,

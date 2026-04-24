@@ -38,6 +38,7 @@ import {
   fetchAIInsights,
   saveAIConfig,
   updateAIInsight,
+  updateBatch,
   runAIAdvisor,
 } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
@@ -291,14 +292,7 @@ function InsightRow({ insight, canMutate, onStatus }) {
       {insight.actions?.length > 0 && (
         <div className="mt-2.5 flex flex-wrap gap-1.5">
           {insight.actions.map((a, i) => (
-            <span
-              key={i}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background/40 px-2 py-1 text-[11px]"
-              title={a.hint}
-            >
-              <span className="font-medium">{a.label}</span>
-              {a.hint && <span className="text-muted-foreground">· {a.hint}</span>}
-            </span>
+            <InsightAction key={i} action={a} insight={insight} canMutate={canMutate} onStatus={onStatus} />
           ))}
         </div>
       )}
@@ -326,6 +320,53 @@ function InsightRow({ insight, canMutate, onStatus }) {
         )}
       </div>
     </li>
+  );
+}
+
+// Action tile. Structured kinds (like advance_batch_phase, added by
+// the CV stage-watcher) render as clickable buttons that apply the
+// change directly and mark the insight as 'applied'. Unstructured
+// hints from the advisor keep their read-only label+hint form.
+function InsightAction({ action, insight, canMutate, onStatus }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+
+  if (action.kind === 'advance_batch_phase' && action.batch_id && action.phase) {
+    async function apply() {
+      if (!confirm(`Advance batch to ${action.phase}?`)) return;
+      setBusy(true);
+      try {
+        await updateBatch(action.batch_id, { phase: action.phase });
+        await onStatus(insight.id, 'applied');
+        toast.success(`Advanced to ${action.phase}`);
+      } catch (err) {
+        toast.error(err);
+      } finally {
+        setBusy(false);
+      }
+    }
+    return (
+      <Button
+        size="sm"
+        variant="default"
+        onClick={apply}
+        disabled={!canMutate || busy || insight.status === 'applied'}
+        title={action.hint}
+      >
+        {busy ? <Loader2 className="animate-spin" /> : <Play />}
+        {action.label}
+      </Button>
+    );
+  }
+
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background/40 px-2 py-1 text-[11px]"
+      title={action.hint}
+    >
+      <span className="font-medium">{action.label}</span>
+      {action.hint && <span className="text-muted-foreground">· {action.hint}</span>}
+    </span>
   );
 }
 

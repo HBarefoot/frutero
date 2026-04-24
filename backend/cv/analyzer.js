@@ -156,6 +156,19 @@ async function analyze(snapshotId, { force = false } = {}) {
     latency_ms: latency,
   });
 
+  // Stage-watcher runs after every successful observation. It's
+  // cheap (one indexed SQL query) and idempotent — duplicate pending
+  // suggestions are filtered out inside the watcher itself.
+  try {
+    const stageWatcher = require('./stage-watcher');
+    stageWatcher.checkAfterObservation({
+      batch_id: snap.batch_id,
+      growth_stage: obs.growth_stage,
+    }).catch((err) => console.error('[cv] stage-watcher failed:', err));
+  } catch (err) {
+    console.error('[cv] stage-watcher hook error:', err);
+  }
+
   // High-risk observations fan out through notifications. Medium does
   // not — too noisy; operators can dial up min_severity to `warn` if
   // they want only these.

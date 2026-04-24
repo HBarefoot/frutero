@@ -239,6 +239,16 @@ router.put('/cv/config', auth.requireAdmin, (req, res) => {
     }
     Q.setSetting('cv_analyze_every_nth', String(n));
   }
+  if (body.stage_advance_enabled !== undefined) {
+    Q.setSetting('cv_stage_advance_enabled', body.stage_advance_enabled ? '1' : '0');
+  }
+  if (body.stage_advance_threshold !== undefined) {
+    const n = parseInt(body.stage_advance_threshold, 10);
+    if (!Number.isFinite(n) || n < 2 || n > 10) {
+      return res.status(400).json({ error: 'stage_advance_threshold must be 2-10' });
+    }
+    Q.setSetting('cv_stage_advance_threshold', String(n));
+  }
   auth.logAudit(req, 'cv.config_update', null, body);
   res.json(capture.settingsForCapture());
 });
