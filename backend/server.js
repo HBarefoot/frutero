@@ -1,4 +1,5 @@
 const http = require('http');
+const https = require('https');
 const path = require('path');
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -14,6 +15,7 @@ const automations = require('./automations');
 const auth = require('./auth');
 const { securityHeaders } = require('./middleware/security-headers');
 const { originCheck } = require('./middleware/origin-check');
+const { loadTlsCredentials } = require('./tls');
 
 const authRoutes = require('./routes/auth');
 const usersRoutes = require('./routes/users');
@@ -36,12 +38,15 @@ async function main() {
   sensor.setAutomations(automations);
   auth.startSessionJanitor();
 
+  const tlsCreds = loadTlsCredentials();
+  const tlsActive = !!tlsCreds;
+
   const app = express();
   app.set('trust proxy', true);
-  // tlsEnabled will flip to true in M4 once the installer provisions a
-  // cert. Keeping this false for now means Helmet skips HSTS and CSP
-  // skips upgrade-insecure-requests — safe for plain-HTTP operation.
-  app.use(securityHeaders({ tlsEnabled: !!config.TLS_ENABLED }));
+  // Helmet's HSTS + CSP upgrade-insecure-requests only enable when TLS
+  // is actually live — avoids trapping operators in HTTPS-redirect hell
+  // if the cert is later removed for some reason.
+  app.use(securityHeaders({ tlsEnabled: tlsActive }));
   app.use(originCheck({
     trustedOrigins: (process.env.TRUSTED_ORIGINS || '')
       .split(',')
@@ -118,15 +123,41 @@ async function main() {
     res.status(500).json({ error: err.message || 'internal error' });
   });
 
-  const server = http.createServer(app);
-  ws.attach(server);
+  // Primary server carries the real app. If TLS is live, it's HTTPS on
+  // HTTPS_PORT and an auxiliary HTTP redirector listens on PORT. If TLS
+  // is off, the app serves HTTP directly on PORT.
+  const primaryServer = tlsActive
+    ? https.createServer(tlsCreds, app)
+    : http.createServer(app);
+  ws.attach(primaryServer);
+
+  let redirectServer = null;
+  if (tlsActive) {
+    const redirectApp = express();
+    redirectApp.use((req, res) => {
+      const host = (req.headers.host || '').split(':')[0];
+      const target = `https://${host}:${config.HTTPS_PORT}${req.url}`;
+      res.redirect(301, target);
+    });
+    redirectServer = http.createServer(redirectApp);
+  }
 
   scheduler.reload();
   sensor.start();
 
-  server.listen(config.PORT, () => {
-    console.log(`[server] listening on :${config.PORT} (gpioMock=${gpio.isMock()})`);
+  const primaryPort = tlsActive ? config.HTTPS_PORT : config.PORT;
+  primaryServer.listen(primaryPort, () => {
+    console.log(
+      `[server] ${tlsActive ? 'HTTPS' : 'HTTP'} listening on :${primaryPort} (gpioMock=${gpio.isMock()})`
+    );
   });
+  if (redirectServer) {
+    redirectServer.listen(config.PORT, () => {
+      console.log(
+        `[server] HTTP redirect on :${config.PORT} → https://:${config.HTTPS_PORT}`
+      );
+    });
+  }
 
   const shutdown = (signal) => {
     console.log(`[server] ${signal} received — shutting down`);
@@ -135,7 +166,10 @@ async function main() {
       scheduler.shutdown();
       gpio.cleanup();
     } finally {
-      server.close(() => process.exit(0));
+      if (redirectServer) {
+        try { redirectServer.close(); } catch { /* ignore */ }
+      }
+      primaryServer.close(() => process.exit(0));
       // Safety: force exit after 5s if server.close hangs
       setTimeout(() => process.exit(0), 5000).unref();
     }

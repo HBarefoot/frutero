@@ -95,10 +95,48 @@ cp -r "$FRONTEND_DIR/dist/." "$BACKEND_DIR/public/"
 log "Seeding SQLite database."
 node "$BACKEND_DIR/scripts/seed.js"
 
-# 6. Install systemd unit.
+# 6. TLS cert — self-signed, 10-year validity, CN = <hostname>.local.
+#    Idempotent: skip if an existing cert is already present. Operators
+#    who want a real cert (LetsEncrypt, ACM, etc.) just replace the files
+#    in-place — no app code changes needed.
+TLS_DIR="/etc/frutero"
+TLS_KEY="$TLS_DIR/server.key"
+TLS_CERT="$TLS_DIR/server.crt"
+if [ ! -f "$TLS_KEY" ] || [ ! -f "$TLS_CERT" ]; then
+  log "Generating self-signed TLS cert (10 year validity) at $TLS_DIR."
+  sudo mkdir -p "$TLS_DIR"
+  PI_HOSTNAME="$(hostname)"
+  sudo openssl req -x509 -newkey rsa:4096 -nodes \
+    -keyout "$TLS_KEY" -out "$TLS_CERT" \
+    -days 3650 \
+    -subj "/CN=${PI_HOSTNAME}.local" \
+    -addext "subjectAltName=DNS:${PI_HOSTNAME}.local,DNS:localhost,IP:127.0.0.1" \
+    >/dev/null 2>&1
+  # Readable by the service user (admin, member of its own group) but not
+  # world-readable. Key is 640 to keep it tight.
+  sudo chown "root:$USER" "$TLS_KEY" "$TLS_CERT"
+  sudo chmod 640 "$TLS_KEY"
+  sudo chmod 644 "$TLS_CERT"
+else
+  log "TLS cert already present at $TLS_CERT."
+fi
+
+# 7. Install systemd unit + TLS env drop-in.
 if [ -r "$SERVICE_FILE" ]; then
   log "Installing systemd service ($SERVICE_NAME)."
   sudo cp "$SERVICE_FILE" "/etc/systemd/system/${SERVICE_NAME}.service"
+
+  # Drop-in lets us toggle TLS env separately from the shipped unit file.
+  DROPIN_DIR="/etc/systemd/system/${SERVICE_NAME}.service.d"
+  sudo mkdir -p "$DROPIN_DIR"
+  sudo tee "$DROPIN_DIR/tls.conf" >/dev/null <<EOF
+[Service]
+Environment=TLS_ENABLED=true
+Environment=TLS_KEY_PATH=$TLS_KEY
+Environment=TLS_CERT_PATH=$TLS_CERT
+Environment=HTTPS_PORT=3443
+EOF
+
   sudo systemctl daemon-reload
   sudo systemctl enable "$SERVICE_NAME" >/dev/null
   sudo systemctl restart "$SERVICE_NAME"
@@ -107,7 +145,7 @@ else
   fail "Missing service file at $SERVICE_FILE"
 fi
 
-# 7. Enable I²C in the boot config so /api/hardware/i2c can detect sensors.
+# 8. Enable I²C in the boot config so /api/hardware/i2c can detect sensors.
 #    Idempotent — only appends if the line isn't already present.
 if [ -n "$BOOT_CONFIG" ] && $IS_PI; then
   if ! grep -qE '^\s*dtparam=i2c_arm=on' "$BOOT_CONFIG"; then
@@ -121,18 +159,19 @@ if [ -n "$BOOT_CONFIG" ] && $IS_PI; then
   sudo modprobe i2c-dev 2>/dev/null || true
 fi
 
-# 8. Ensure admin is in the gpio group (for libgpiod access without sudo).
+# 9. Ensure admin is in the gpio group (for libgpiod access without sudo).
 if $IS_PI && id -nG "$USER" 2>/dev/null | grep -qvw gpio; then
   log "Adding $USER to the gpio group (log out + back in to activate)."
   sudo usermod -aG gpio "$USER" || warn "gpio group addition failed"
 fi
 
-# 9. Print access URL + next steps.
+# 10. Print access URL + next steps.
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 if [ -z "$IP" ]; then IP="<pi-ip>"; fi
 echo
 log "Done. Open the dashboard to finish first-run setup:"
-log "    http://$IP:3000"
+log "    https://$IP:3443  (accept the self-signed cert warning)"
+log "    http://$IP        (redirects to HTTPS)"
 log ""
 log "Useful commands:"
 log "    sudo journalctl -u $SERVICE_NAME -f     # tail logs"
@@ -145,6 +184,6 @@ if $IS_PI && id -nG "$USER" 2>/dev/null | grep -qvw gpio; then
   warn "gpio group membership pending — log out + back in (or reboot) so GPIO access works without sudo."
 fi
 
-# 10. Note: 1-Wire (dtoverlay=w1-gpio) is NOT enabled by default — GPIO 4 is
+# 11. Note: 1-Wire (dtoverlay=w1-gpio) is NOT enabled by default — GPIO 4 is
 #    also the default DHT22 pin in this build. Enable it manually if you want
 #    DS18B20 probes AND have moved the DHT22 to a different pin.
