@@ -61,7 +61,7 @@ function buildHardwareInfo() {
   const stats = safeCall(() => host.getHostStats(), {});
   return {
     pi_model: stats.pi_model || null,
-    kernel: stats.kernel_release || null,
+    kernel: stats.kernel || null,
     node_version: process.version,
   };
 }
@@ -82,6 +82,19 @@ function buildSnapshot() {
   }
 
   const stats = safeCall(() => host.getHostStats(), {});
+  const cpu = stats.cpu || {};
+  const memory = stats.memory || {};
+  const disk = stats.disk_root || {};
+  const loadAvg = Number.isFinite(cpu.load_1m)
+    ? [cpu.load_1m, cpu.load_5m, cpu.load_15m]
+    : null;
+  const ramPct = Number.isFinite(memory.used_pct)
+    ? Math.round(memory.used_pct * 1000) / 10
+    : null;
+  const diskPct =
+    Number.isFinite(disk.used_bytes) && Number.isFinite(disk.total_bytes) && disk.total_bytes > 0
+      ? Math.round((disk.used_bytes / disk.total_bytes) * 1000) / 10
+      : null;
 
   let activeBatch = null;
   try {
@@ -106,7 +119,7 @@ function buildSnapshot() {
   return {
     sent_at: new Date().toISOString(),
     sensor: {
-      temp_f: reading.temp_f ?? null,
+      temp_f: reading.temperature ?? null,
       humidity: reading.humidity ?? null,
       simulated: !!reading.simulated,
       reading_age_seconds: health.silent_seconds ?? null,
@@ -115,11 +128,11 @@ function buildSnapshot() {
     actuators: actuatorState,
     active_batch: activeBatch,
     host: {
-      cpu_temp_c: stats.cpu_temp_c ?? null,
-      load_avg: stats.load_avg ?? null,
-      ram_pct: stats.ram_pct ?? null,
-      disk_pct: stats.disk_pct ?? null,
-      throttled: stats.throttled || null,
+      cpu_temp_c: cpu.temp_c ?? null,
+      load_avg: loadAvg,
+      ram_pct: ramPct,
+      disk_pct: diskPct,
+      throttled: cpu.throttled || null,
       uptime_seconds: stats.uptime_seconds ?? null,
     },
   };
