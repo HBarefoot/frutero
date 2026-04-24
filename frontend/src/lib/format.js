@@ -10,9 +10,19 @@ export function formatUptime(seconds) {
   return parts.join(' ');
 }
 
+// SQLite CURRENT_TIMESTAMP returns "YYYY-MM-DD HH:MM:SS" in UTC with no TZ
+// suffix; browsers would parse that as local time and skew by the local
+// offset. Coerce to UTC when no TZ info is present.
+function parseTs(iso) {
+  if (!iso) return NaN;
+  const hasTz = /[Zz]|[+-]\d{2}:?\d{2}$/.test(iso);
+  const normalized = hasTz ? iso : iso.replace(' ', 'T') + 'Z';
+  return new Date(normalized).getTime();
+}
+
 export function formatRelative(iso) {
   if (!iso) return '—';
-  const then = new Date(iso).getTime();
+  const then = parseTs(iso);
   const diff = Math.floor((Date.now() - then) / 1000);
   if (diff < 5) return 'just now';
   if (diff < 60) return `${diff}s ago`;
@@ -23,13 +33,13 @@ export function formatRelative(iso) {
 
 export function formatTime(iso) {
   if (!iso) return '—';
-  const d = new Date(iso);
+  const d = new Date(parseTs(iso));
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 export function formatDateTime(iso) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString([], {
+  return new Date(parseTs(iso)).toLocaleString([], {
     month: 'short',
     day: '2-digit',
     hour: '2-digit',
