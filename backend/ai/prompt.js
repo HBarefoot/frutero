@@ -4,7 +4,13 @@ const sensor = require('../sensor');
 
 const SYSTEM_PROMPT = `You are an expert mushroom-cultivation advisor embedded in a grow-chamber automation platform called frutero.
 
-Every few hours you review the chamber's current conditions, device state, active species program, recent events, and automation config. Your job is to surface up to 3 **actionable insights** for the grower.
+Every few hours you review the chamber's **full signal stack**: current sensor reading + 24h trend, device state, active species program, active batch + phase + events, recent alerts, and recent computer-vision observations from the camera. Your job is to surface up to 3 **actionable insights** for the grower.
+
+**Cross-reference signals.** The real value comes from combining them:
+- If CV reports contamination_risk: medium/high AND temperature has been trending high in the 24h stats → recommend investigating rather than treating each in isolation.
+- If the active batch has been in 'pinning' for > 5 days AND humidity trend has dipped below the species humid_min → suggest raising mister threshold.
+- If recent alerts show sensor silence + mister automation is enabled → advise disabling automation until the sensor is verified.
+- If CV observations consistently show a stage ahead of the batch's current phase → note it but don't act (a separate auto-advance watcher handles that).
 
 Constraints:
 - You are an **advisor**, not a controller. You NEVER actuate devices. The owner reviews and applies changes manually.
@@ -12,6 +18,7 @@ Constraints:
 - Prefer plain-English grower language. Avoid jargon unless the grower's context already uses it.
 - Only speak up when there is something meaningful to say. It is fine (and often correct) to return 0 insights.
 - Safety clamps on the mister (max-on, min-off, daily cap) exist to protect the piezo disc — never recommend disabling them.
+- Set severity: "warn" ONLY for contamination signals, sensor-silence concerns, or out-of-range conditions the grower must act on. Tuning suggestions and observations stay "info".
 
 Output schema: Return a JSON object matching this shape exactly:
 
@@ -40,12 +47,27 @@ function buildContext() {
   const alertConfigs = Q.getAlertConfig();
   const alertHistory = Q.getAlertHistory(10);
   const recentActivity = Q.getDeviceLog(15);
+  const trend24h = Q.getReadingStats(24);
 
   const activeBatch = Q.getActiveBatch();
   const batchEvents = activeBatch ? Q.listBatchEvents(activeBatch.id, 20) : [];
   const daysInBatch = activeBatch
     ? Math.floor((Date.now() - new Date(activeBatch.started_at).getTime()) / 86400000)
     : null;
+
+  // Last 6 non-error CV observations for the active batch. Gives the
+  // advisor a view into what the camera has been seeing so it can
+  // cross-reference contamination risk and stage with sensor trends.
+  const recentObservations = activeBatch
+    ? Q.listObservations({ batch_id: activeBatch.id, limit: 6 })
+      .filter((o) => !o.error)
+      .map((o) => ({
+        at: o.timestamp,
+        growth_stage: o.growth_stage,
+        contamination_risk: o.contamination_risk,
+        findings: (o.findings || []).slice(0, 2),
+      }))
+    : [];
 
   const snapshot = {
     timestamp: new Date().toISOString(),
@@ -60,6 +82,7 @@ function buildContext() {
       recent_events: batchEvents.slice(0, 10).map((e) => ({
         at: e.timestamp, kind: e.kind, detail: e.detail,
       })),
+      recent_observations: recentObservations,
     } : null,
     species: {
       current: settings.species || null,
@@ -84,6 +107,7 @@ function buildContext() {
         silent_seconds: health.silent_seconds,
         last_success_at: health.last_success_at,
       },
+      trend_24h: trend24h,
     },
     actuators: actuators.map((a) => ({
       key: a.key,
