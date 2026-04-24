@@ -112,9 +112,11 @@ if [ ! -f "$TLS_KEY" ] || [ ! -f "$TLS_CERT" ]; then
     -subj "/CN=${PI_HOSTNAME}.local" \
     -addext "subjectAltName=DNS:${PI_HOSTNAME}.local,DNS:localhost,IP:127.0.0.1" \
     >/dev/null 2>&1
-  # Readable by the service user (admin, member of its own group) but not
-  # world-readable. Key is 640 to keep it tight.
-  sudo chown "root:$USER" "$TLS_KEY" "$TLS_CERT"
+  # Cert must be group-readable by the service user. When install.sh is
+  # invoked via sudo, $USER is 'root' and SUDO_USER is the real user —
+  # prefer SUDO_USER so the group ends up matching the admin account.
+  SERVICE_USER="${SUDO_USER:-$USER}"
+  sudo chown "root:${SERVICE_USER}" "$TLS_KEY" "$TLS_CERT"
   sudo chmod 640 "$TLS_KEY"
   sudo chmod 644 "$TLS_CERT"
 else
@@ -159,10 +161,13 @@ if [ -n "$BOOT_CONFIG" ] && $IS_PI; then
   sudo modprobe i2c-dev 2>/dev/null || true
 fi
 
-# 9. Ensure admin is in the gpio group (for libgpiod access without sudo).
-if $IS_PI && id -nG "$USER" 2>/dev/null | grep -qvw gpio; then
-  log "Adding $USER to the gpio group (log out + back in to activate)."
-  sudo usermod -aG gpio "$USER" || warn "gpio group addition failed"
+# 9. Ensure the service user is in the gpio group (for libgpiod access
+#    without sudo). Under sudo, $USER is 'root'; SUDO_USER is the real
+#    account we want to grant the group to.
+SERVICE_USER="${SUDO_USER:-$USER}"
+if $IS_PI && id -nG "$SERVICE_USER" 2>/dev/null | grep -qvw gpio; then
+  log "Adding $SERVICE_USER to the gpio group (log out + back in to activate)."
+  sudo usermod -aG gpio "$SERVICE_USER" || warn "gpio group addition failed"
 fi
 
 # 10. Print access URL + next steps.
@@ -180,7 +185,7 @@ log "    sudo systemctl status $SERVICE_NAME     # check health"
 if [ "${REBOOT_HINT:-false}" = "true" ]; then
   warn "I²C was just enabled — reboot to expose /dev/i2c-* before the hardware scan will detect sensors."
 fi
-if $IS_PI && id -nG "$USER" 2>/dev/null | grep -qvw gpio; then
+if $IS_PI && id -nG "$SERVICE_USER" 2>/dev/null | grep -qvw gpio; then
   warn "gpio group membership pending — log out + back in (or reboot) so GPIO access works without sudo."
 fi
 
