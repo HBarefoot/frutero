@@ -156,6 +156,26 @@ export async function testNotification(channel) {
   return (await api.post(`/notifications/test/${channel}`)).data;
 }
 
+// --- CV / computer vision -------------------------------------------
+export async function fetchCVSnapshots({ batch_id, limit = 200 } = {}) {
+  return (await api.get('/cv/snapshots', { params: { batch_id, limit } })).data;
+}
+export async function fetchLatestSnapshot({ batch_id } = {}) {
+  return (await api.get('/cv/snapshots/latest', { params: { batch_id } })).data;
+}
+export function snapshotImageUrl(id) {
+  return `/api/cv/snapshots/${id}/image`;
+}
+export async function triggerSnapshot() {
+  return (await api.post('/cv/snapshots/now')).data;
+}
+export async function fetchCVConfig() {
+  return (await api.get('/cv/config')).data;
+}
+export async function saveCVConfig(patch) {
+  return (await api.put('/cv/config', patch)).data;
+}
+
 export async function fetchStatus() {
   return (await api.get('/status')).data;
 }

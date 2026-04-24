@@ -115,6 +115,19 @@ function registerInternalJobs() {
       console.error('[scheduler] rollup failed:', err);
     }
   });
+  // Nightly CV snapshot prune at 03:15 (after the rollup). Deletes
+  // snapshot files + rows older than cv_snapshots_retention_days.
+  schedule.scheduleJob('15 3 * * *', async () => {
+    try {
+      const cvCapture = require('./cv/capture');
+      const r = await cvCapture.prune();
+      if (r.expired > 0) {
+        console.log(`[scheduler] pruned ${r.unlinked}/${r.expired} snapshot files (${r.failed} unlink failed)`);
+      }
+    } catch (err) {
+      console.error('[scheduler] snapshot prune failed:', err);
+    }
+  });
 }
 
 function nextInvocations() {

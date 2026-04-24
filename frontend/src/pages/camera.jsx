@@ -21,6 +21,7 @@ import {
   saveCameraConfig,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { SnapshotTimeline, CVConfigCard } from '@/components/camera/snapshot-timeline';
 
 const RES_OPTIONS = ['320x240', '640x480', '800x600', '1280x720', '1920x1080'];
 
@@ -133,7 +134,14 @@ export default function CameraPage() {
           </CardContent>
         </Card>
 
-        <CameraConfigCard isOwner={isOwner} status={status} onSaved={reload} />
+        <div className="space-y-6">
+          <CameraConfigCard isOwner={isOwner} status={status} onSaved={reload} />
+          {isOwner && <CVConfigCard />}
+        </div>
+      </div>
+
+      <div className="mt-6">
+        <SnapshotTimeline />
       </div>
     </>
   );

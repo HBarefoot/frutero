@@ -224,6 +224,24 @@ function init() {
       samples INTEGER NOT NULL
     );
 
+    -- Phase 9 M1: scheduled camera snapshots. Images live on disk
+    -- under backend/data/snapshots/ — this table is just the index.
+    -- batch_id nullable so snapshots taken without an active batch
+    -- land in the "unbatched" bucket and can later be reassigned.
+    CREATE TABLE IF NOT EXISTS cv_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+      path TEXT NOT NULL,
+      size_bytes INTEGER,
+      width INTEGER,
+      height INTEGER,
+      trigger TEXT NOT NULL DEFAULT 'scheduled',
+      error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_cv_snapshots_timestamp ON cv_snapshots(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_cv_snapshots_batch ON cv_snapshots(batch_id);
+
     -- Generic actuator registry. Replaces hardcoded fan/light pin config.
     -- key is referenced by schedules.device and device_log.device.
     CREATE TABLE IF NOT EXISTS actuators (
@@ -973,6 +991,78 @@ const Q = {
       .all(batch_id, limit);
   },
 
+  // --- CV snapshots --------------------------------------------------
+  insertSnapshot({ batch_id, path, size_bytes, width, height, trigger, error }) {
+    return getDb()
+      .prepare(
+        `INSERT INTO cv_snapshots
+           (batch_id, path, size_bytes, width, height, trigger, error)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        batch_id ?? null,
+        path,
+        size_bytes ?? null,
+        width ?? null,
+        height ?? null,
+        trigger || 'scheduled',
+        error || null,
+      );
+  },
+
+  listSnapshots({ batch_id, limit = 200 } = {}) {
+    const base = `SELECT id, timestamp, batch_id, path, size_bytes, width, height, trigger, error FROM cv_snapshots`;
+    if (batch_id != null) {
+      return getDb()
+        .prepare(`${base} WHERE batch_id = ? ORDER BY timestamp DESC LIMIT ?`)
+        .all(batch_id, limit);
+    }
+    return getDb()
+      .prepare(`${base} ORDER BY timestamp DESC LIMIT ?`)
+      .all(limit);
+  },
+
+  getSnapshot(id) {
+    return getDb()
+      .prepare(
+        `SELECT id, timestamp, batch_id, path, size_bytes, width, height, trigger, error
+         FROM cv_snapshots WHERE id = ?`
+      )
+      .get(id) || null;
+  },
+
+  getLatestSnapshot({ batch_id } = {}) {
+    const base = `SELECT id, timestamp, batch_id, path, size_bytes, width, height, trigger, error
+                  FROM cv_snapshots WHERE error IS NULL`;
+    if (batch_id != null) {
+      return getDb()
+        .prepare(`${base} AND batch_id = ? ORDER BY timestamp DESC LIMIT 1`)
+        .get(batch_id) || null;
+    }
+    return getDb()
+      .prepare(`${base} ORDER BY timestamp DESC LIMIT 1`)
+      .get() || null;
+  },
+
+  deleteSnapshot(id) {
+    return getDb().prepare('DELETE FROM cv_snapshots WHERE id = ?').run(id);
+  },
+
+  pruneOldSnapshots(days) {
+    return getDb()
+      .prepare(
+        `SELECT id, path FROM cv_snapshots
+         WHERE timestamp < datetime('now', ?)`
+      )
+      .all(`-${days} days`);
+  },
+
+  countSnapshots(hours = 24) {
+    return getDb()
+      .prepare(`SELECT COUNT(*) AS n FROM cv_snapshots WHERE timestamp >= datetime('now', ?)`)
+      .get(`-${hours} hours`).n;
+  },
+
   // Device-log + insight stats scoped to a batch.
   getBatchStats(batch_id) {
     const db = getDb();
@@ -984,7 +1074,10 @@ const Q = {
     const insights = db.prepare(
       `SELECT COUNT(*) AS n FROM ai_insights WHERE batch_id = ?`
     ).get(batch_id).n;
-    return { devices, insights };
+    const snapshots = db.prepare(
+      `SELECT COUNT(*) AS n FROM cv_snapshots WHERE batch_id = ? AND error IS NULL`
+    ).get(batch_id).n;
+    return { devices, insights, snapshots };
   },
 
   deleteSessionsForUserExcept(user_id, keepToken) {

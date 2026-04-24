@@ -38,6 +38,8 @@ const aiRoutes = require('./routes/ai');
 const aiAdvisor = require('./ai/advisor');
 const batchesRoutes = require('./routes/batches');
 const notificationsRoutes = require('./routes/notifications');
+const cvRoutes = require('./routes/cv');
+const cvCapture = require('./cv/capture');
 
 async function main() {
   db.init();
@@ -132,6 +134,7 @@ async function main() {
   app.use('/api', aiRoutes);
   app.use('/api', batchesRoutes);
   app.use('/api', notificationsRoutes);
+  app.use('/api', cvRoutes);
 
   const publicDir = path.isAbsolute(config.PUBLIC_DIR)
     ? config.PUBLIC_DIR
@@ -190,6 +193,9 @@ async function main() {
   // fires when `ai_enabled=1` AND a provider is configured. Safe to
   // start unconditionally.
   aiAdvisor.startScheduler();
+  // CV snapshot capture runs every cv_snapshots_cadence_minutes when
+  // cv_snapshots_enabled=1. Safe to start unconditionally.
+  cvCapture.startScheduler();
 
   const primaryPort = tlsActive ? config.HTTPS_PORT : config.PORT;
   primaryServer.listen(primaryPort, () => {

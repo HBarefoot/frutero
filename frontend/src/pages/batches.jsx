@@ -30,6 +30,7 @@ import { Switch } from '@/components/ui/switch';
 import { SelectNative } from '@/components/ui/select-native';
 import { PageHeader } from '@/components/layout/page-header';
 import { PageSkeleton } from '@/components/ui/skeleton';
+import { SnapshotTimeline } from '@/components/camera/snapshot-timeline';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/lib/auth-context';
 import { useStatus } from '@/lib/status-context';
@@ -109,13 +110,18 @@ export default function BatchesPage() {
             onSelect={setSelectedId}
           />
           {selectedId && detail && (
-            <BatchDetail
-              detail={detail}
-              canMutate={can('mutate')}
-              onChange={async () => {
-                await Promise.all([load(), loadDetail(selectedId)]);
-              }}
-            />
+            <>
+              <BatchDetail
+                detail={detail}
+                canMutate={can('mutate')}
+                onChange={async () => {
+                  await Promise.all([load(), loadDetail(selectedId)]);
+                }}
+              />
+              {detail.stats?.snapshots > 0 && (
+                <SnapshotTimeline batchId={detail.batch.id} />
+              )}
+            </>
           )}
         </div>
 
