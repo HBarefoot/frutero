@@ -1,4 +1,5 @@
 const schedule = require('node-schedule');
+const { CronExpressionParser } = require('cron-parser');
 const gpio = require('./gpio');
 const { Q } = require('./database');
 
@@ -140,4 +141,39 @@ function shutdown() {
   unregisterAll();
 }
 
-module.exports = { reload, unregisterAll, nextInvocations, nextByDevice, runTimedTest, shutdown };
+// For a given actuator key, find the most-recent cron fire time across
+// all enabled schedules targeting it, and return whether that fire was
+// an 'on' or 'off'. Returns null if no schedule targets this actuator.
+//
+// Used at boot to figure out which latching devices (lights, heaters)
+// should be ON right now based on the schedule — without this, a
+// mid-photoperiod restart leaves lights off until the next 06:00 cron
+// fire, which can be ~20 hours away.
+function computeDesiredState(key) {
+  const rows = Q.listEnabledSchedules().filter((s) => s.device === key);
+  if (!rows.length) return null;
+
+  const now = new Date();
+  let bestTime = null;
+  let bestAction = null;
+
+  for (const s of rows) {
+    try {
+      const iter = CronExpressionParser.parse(s.cron_expression, { currentDate: now });
+      const prevDate = iter.prev().toDate();
+      if (!bestTime || prevDate > bestTime) {
+        bestTime = prevDate;
+        bestAction = s.action;
+      }
+    } catch (err) {
+      console.warn(`[scheduler] bad cron '${s.cron_expression}' for schedule #${s.id}:`, err.message);
+    }
+  }
+
+  return bestAction; // 'on' | 'off' | null
+}
+
+module.exports = {
+  reload, unregisterAll, nextInvocations, nextByDevice, runTimedTest,
+  computeDesiredState, shutdown,
+};

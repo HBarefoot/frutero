@@ -86,6 +86,54 @@ function init() {
   reloadActuators();
 }
 
+// Boot-time state recovery: for each latching actuator (lights, heaters —
+// anything without auto_off_seconds and not a mister), re-apply the
+// schedule's most-recent desired state so a mid-cycle restart doesn't
+// leave the relay stuck OFF until the next cron fire. Pulse-style
+// actuators (fan, mister) are never restored to ON: they are meant to
+// cycle, and a mister specifically could dry-fire its piezo disc if
+// restored while the reservoir is low.
+//
+// Called from server.js after scheduler.reload() so both modules are
+// ready. SafetyError from applyStateInternal is logged and skipped —
+// we never propagate a recovery failure as fatal.
+function restoreScheduledStates(scheduler) {
+  let restored = 0;
+  for (const [key, meta] of actuators.entries()) {
+    if (!meta.enabled) continue;
+    // Skip pulse-style + mister: they are never latched "on" across restarts.
+    if (meta.auto_off_seconds != null) continue;
+    if (meta.kind === 'mister') continue;
+
+    const desired = scheduler.computeDesiredState(key);
+    if (desired !== 'on') continue;
+
+    try {
+      applyStateInternal(key, true, 'startup-recovery', null, false);
+      console.log(`[gpio] boot-restored ${key}=ON from schedule`);
+      restored += 1;
+      try {
+        Q.insertAudit({
+          user_id: null,
+          action: 'gpio.startup_recovery',
+          target: `device:${key}`,
+          detail: JSON.stringify({ state: 'on', reason: 'latest scheduled fire was on' }),
+          ip: null,
+        });
+      } catch { /* audit failure is non-fatal */ }
+    } catch (err) {
+      if (err.code === 'SAFETY_BLOCKED') {
+        console.warn(`[gpio] boot recovery skipped ${key}: ${err.message}`);
+      } else {
+        console.error(`[gpio] boot recovery failed ${key}:`, err);
+      }
+    }
+  }
+  if (restored > 0) {
+    console.log(`[gpio] restored ${restored} actuator(s) from schedule state`);
+  }
+}
+
 // Reads the actuators table, opens any pins that aren't already open, closes
 // pins for actuators that vanished, and refreshes in-memory metadata. Safe
 // to call repeatedly (e.g. after add/edit/delete).
@@ -379,6 +427,7 @@ function getLightState() { return getState('light'); }
 module.exports = {
   init,
   reloadActuators,
+  restoreScheduledStates,
   setActuator,
   pulse,
   listActuators,

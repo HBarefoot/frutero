@@ -147,6 +147,10 @@ async function main() {
   }
 
   scheduler.reload();
+  // Re-apply latching actuator states (lights, heaters) based on the
+  // most-recent scheduled fire. Safe to run always; no-op when nothing
+  // needs restoring. Pulse devices are intentionally excluded inside.
+  gpio.restoreScheduledStates(scheduler);
   sensor.start();
 
   const primaryPort = tlsActive ? config.HTTPS_PORT : config.PORT;
