@@ -23,6 +23,7 @@
     "node-schedule": "^2.1.1",
     "nodemailer": "^8.0.6",
     "ua-parser-js": "^2.0.9",
+    "web-push": "^3.6.7",
     "ws": "^8.18.0"
   },
   "optionalDependencies": {

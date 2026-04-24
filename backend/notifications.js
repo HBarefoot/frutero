@@ -161,6 +161,30 @@ function renderEmailHtml({ title, body, severity }) {
   </body></html>`;
 }
 
+// --- Web Push --------------------------------------------------------
+// Fans out to every subscribed device across all users. Subscription
+// management (per-user opt-in) lives in backend/push.js; this just
+// delivers. Respects the global notify_push_enabled toggle.
+async function sendPush({ title, body, severity, link }) {
+  const s = Q.getAllSettings();
+  if (s.notify_push_enabled !== '1') {
+    return { ok: false, skipped: true, reason: 'disabled' };
+  }
+  const push = require('./push'); // lazy-require — avoids pulling webpush at startup when push is off
+  const r = await push.sendToAll({
+    title: title || 'frutero',
+    body,
+    severity,
+    url: link || '/',
+    tag: severity === 'warn' ? 'frutero-warn' : 'frutero',
+  });
+  if (!r.sent || r.sent.length === 0) {
+    return { ok: false, skipped: true, reason: r.reason || 'no_subscriptions' };
+  }
+  const okCount = r.sent.filter((x) => x.ok).length;
+  return { ok: okCount > 0, delivered: okCount, total: r.sent.length };
+}
+
 // --- Webhook (Slack / Discord / PagerDuty / generic JSON) -----------
 async function sendWebhook({ title, body, severity, link }) {
   const s = Q.getAllSettings();
@@ -255,11 +279,12 @@ async function notify(msg = {}) {
     } catch { /* no active batch or table missing on fresh install */ }
   }
 
-  const channels = new Set(msg.channels || ['telegram', 'email', 'webhook']);
+  const channels = new Set(msg.channels || ['telegram', 'email', 'webhook', 'push']);
   const tasks = [];
   if (channels.has('telegram')) tasks.push(sendTelegram(msg).then((r) => ({ channel: 'telegram', ...r })));
   if (channels.has('email')) tasks.push(sendEmail(msg).then((r) => ({ channel: 'email', ...r })));
   if (channels.has('webhook')) tasks.push(sendWebhook(msg).then((r) => ({ channel: 'webhook', ...r })));
+  if (channels.has('push')) tasks.push(sendPush(msg).then((r) => ({ channel: 'push', ...r })));
 
   const results = await Promise.all(tasks);
   const errored = results.filter((r) => !r.ok && !r.skipped);
@@ -269,4 +294,4 @@ async function notify(msg = {}) {
   return { sent: results };
 }
 
-module.exports = { notify, sendTelegram, sendEmail, sendWebhook, sendRaw };
+module.exports = { notify, sendTelegram, sendEmail, sendWebhook, sendRaw, sendPush };

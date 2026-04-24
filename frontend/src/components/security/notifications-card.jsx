@@ -35,6 +35,7 @@ const EMPTY_FORM = {
   telegram: { enabled: false, chat_id: '', bot_token: '' },
   email: { enabled: false, host: '', port: 587, secure: false, user: '', password: '', from: '', to: '' },
   webhook: { enabled: false, style: 'generic', url: '' },
+  push: { enabled: false },
 };
 
 export function NotificationsCard() {
@@ -62,6 +63,7 @@ export function NotificationsCard() {
           password: '',
         },
         webhook: { enabled: c.webhook.enabled, style: c.webhook.style, url: '' },
+        push: { enabled: !!c.push?.enabled },
       });
     } catch (err) {
       toast.error(err);
@@ -370,6 +372,27 @@ export function NotificationsCard() {
           >
             Save webhook
           </Button>
+        </ChannelSection>
+
+        <ChannelSection
+          icon={Bell}
+          label="Web Push"
+          enabled={form.push.enabled}
+          hasCredential={(config.push?.subscriptions ?? 0) > 0}
+          credentialLabel="Devices"
+          onToggle={(v) => {
+            setForm({ ...form, push: { enabled: v } });
+            savePatch({ push: { enabled: v } });
+          }}
+          onTest={() => runTest('push')}
+          testing={testing === 'push'}
+          busy={busy}
+        >
+          <p className="text-[11px] text-muted-foreground">
+            Global toggle for the push channel. Each user enrolls their own devices from the
+            Account page; push respects the same min-severity filter as email/Telegram.
+            Self-signed HTTPS works after the client accepts the cert — Safari does not.
+          </p>
         </ChannelSection>
       </CardContent>
     </Card>

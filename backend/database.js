@@ -297,6 +297,23 @@ function init() {
       config TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    -- Web Push subscriptions (Phase 11 M4). Per-user, per-device:
+    -- one row per (user_id, endpoint). Endpoint is the opaque URL the
+    -- browser's push service exposes — unique across the subscription's
+    -- lifetime, which also lets us ON CONFLICT update auth/p256dh if the
+    -- same device re-subscribes.
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint TEXT UNIQUE NOT NULL,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      user_agent TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at DATETIME
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
   `);
 
   // Additive migration: add user_id to device_log for attribution on
@@ -1348,6 +1365,52 @@ const Q = {
     return getDb()
       .prepare('DELETE FROM password_resets WHERE user_id = ?')
       .run(user_id);
+  },
+
+  // Web Push subscriptions -------------------------------------------
+  upsertPushSubscription({ user_id, endpoint, p256dh, auth, user_agent }) {
+    return getDb()
+      .prepare(
+        `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, user_agent, last_seen_at)
+         VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(endpoint) DO UPDATE SET
+           user_id = excluded.user_id,
+           p256dh = excluded.p256dh,
+           auth = excluded.auth,
+           user_agent = excluded.user_agent,
+           last_seen_at = CURRENT_TIMESTAMP`
+      )
+      .run(user_id, endpoint, p256dh, auth, user_agent || null);
+  },
+
+  listPushSubscriptions({ user_id } = {}) {
+    const sql = user_id != null
+      ? `SELECT id, user_id, endpoint, p256dh, auth, user_agent, created_at, last_seen_at
+         FROM push_subscriptions WHERE user_id = ? ORDER BY created_at DESC`
+      : `SELECT id, user_id, endpoint, p256dh, auth, user_agent, created_at, last_seen_at
+         FROM push_subscriptions ORDER BY created_at DESC`;
+    const stmt = getDb().prepare(sql);
+    return user_id != null ? stmt.all(user_id) : stmt.all();
+  },
+
+  deletePushSubscription({ endpoint, user_id }) {
+    // user_id is optional: the route handler passes it so a user can
+    // only delete their own subscriptions; internal pruning after a
+    // 410 omits it (device is already gone, doesn't matter whose).
+    if (user_id != null) {
+      return getDb()
+        .prepare('DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?')
+        .run(endpoint, user_id);
+    }
+    return getDb()
+      .prepare('DELETE FROM push_subscriptions WHERE endpoint = ?')
+      .run(endpoint);
+  },
+
+  touchPushSubscription(endpoint) {
+    return getDb()
+      .prepare('UPDATE push_subscriptions SET last_seen_at = CURRENT_TIMESTAMP WHERE endpoint = ?')
+      .run(endpoint);
   },
 
   // Audit log --------------------------------------------------------

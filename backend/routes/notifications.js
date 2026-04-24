@@ -34,6 +34,10 @@ function currentConfig() {
       style: s.notify_webhook_style || 'generic',
       has_url: !!Q.getSecret('notify_webhook_url'),
     },
+    push: {
+      enabled: s.notify_push_enabled === '1',
+      subscriptions: Q.listPushSubscriptions().length,
+    },
   };
 }
 
@@ -100,6 +104,11 @@ router.put('/notifications/config', auth.requireAdmin, (req, res) => {
     }
   }
 
+  if (body.push) {
+    const p = body.push;
+    if (p.enabled !== undefined) Q.setSetting('notify_push_enabled', p.enabled ? '1' : '0');
+  }
+
   auth.logAudit(req, 'notifications.config_update', null, {
     fields: Object.keys(body),
   });
@@ -111,7 +120,7 @@ router.put('/notifications/config', auth.requireAdmin, (req, res) => {
 // Honors min_severity bypass via { force: true }.
 router.post('/notifications/test/:channel', auth.requireAdmin, async (req, res) => {
   const channel = req.params.channel;
-  if (!['telegram', 'email', 'webhook'].includes(channel)) {
+  if (!['telegram', 'email', 'webhook', 'push'].includes(channel)) {
     return res.status(400).json({ error: 'unknown_channel' });
   }
   const result = await notifications.notify({

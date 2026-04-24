@@ -159,6 +159,23 @@ export async function testNotification(channel) {
   return (await api.post(`/notifications/test/${channel}`)).data;
 }
 
+// --- Web Push (per-user) --------------------------------------------
+export async function fetchPushVapidKey() {
+  return (await api.get('/push/vapid')).data;
+}
+export async function subscribePush(body) {
+  return (await api.post('/push/subscribe', body)).data;
+}
+export async function unsubscribePush(endpoint) {
+  return (await api.delete('/push/subscribe', { data: { endpoint } })).data;
+}
+export async function listMyPushSubscriptions() {
+  return (await api.get('/push/subscriptions')).data;
+}
+export async function testPush() {
+  return (await api.post('/push/test')).data;
+}
+
 // --- CV / computer vision -------------------------------------------
 export async function fetchCVSnapshots({ batch_id, limit = 200 } = {}) {
   return (await api.get('/cv/snapshots', { params: { batch_id, limit } })).data;

@@ -40,6 +40,7 @@ const batchesRoutes = require('./routes/batches');
 const notificationsRoutes = require('./routes/notifications');
 const cvRoutes = require('./routes/cv');
 const cvCapture = require('./cv/capture');
+const pushRoutes = require('./routes/push');
 
 async function main() {
   db.init();
@@ -109,6 +110,11 @@ async function main() {
 
   // Everything else under /api requires an authenticated session.
   app.use('/api', auth.requireAuth);
+
+  // Push subscription endpoints are self-scoped (user manages their
+  // own device subscriptions) and we want viewers to get push too, so
+  // they mount before the global mutate gate.
+  app.use('/api', pushRoutes);
 
   // Any non-GET to /api (mutation) needs at least operator-level access.
   // Owner-only actions add `requireAdmin` inside their individual routers.

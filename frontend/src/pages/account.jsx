@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { KeyRound, Laptop, LogOut, Save, UserCircle } from 'lucide-react';
+import { Bell, BellOff, KeyRound, Laptop, LogOut, Save, Send, UserCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -15,11 +15,17 @@ import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/layout/page-header';
 import { PasswordStrength } from '@/components/auth/password-strength';
 import { useAuth } from '@/lib/auth-context';
+import { useToast } from '@/components/ui/toast';
 import {
   changeMyPassword,
   fetchMySessions,
   revokeMyOtherSessions,
   updateMyName,
+  fetchPushVapidKey,
+  subscribePush,
+  unsubscribePush,
+  listMyPushSubscriptions,
+  testPush,
 } from '@/lib/api';
 import { formatDateTime, formatRelative } from '@/lib/format';
 
@@ -38,6 +44,7 @@ export default function AccountPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <ProfileCard user={user} onSaved={refresh} />
         <PasswordCard />
+        <PushNotificationsCard className="lg:col-span-2" />
         <SessionsCard className="lg:col-span-2" />
       </div>
     </>
@@ -290,6 +297,219 @@ function SessionsCard({ className }) {
       </CardContent>
     </Card>
   );
+}
+
+// Per-user push notification enrollment. The SW handles delivery (see
+// frontend/public/sw.js); this card is just the subscribe/unsubscribe
+// UI and a device list so the operator can see what's enrolled and
+// prune stale entries.
+function PushNotificationsCard({ className }) {
+  const toast = useToast();
+  const [supported, setSupported] = useState(true);
+  const [permission, setPermission] = useState(
+    typeof Notification !== 'undefined' ? Notification.permission : 'denied'
+  );
+  const [subs, setSubs] = useState(null);
+  const [hasLocal, setHasLocal] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      setSupported(false);
+      return;
+    }
+    refresh();
+  }, []);
+
+  async function refresh() {
+    try {
+      const r = await listMyPushSubscriptions();
+      setSubs(r.subscriptions || []);
+      const reg = await navigator.serviceWorker.ready;
+      const cur = await reg.pushManager.getSubscription();
+      setHasLocal(!!cur);
+    } catch (err) {
+      toast.error(err);
+    }
+  }
+
+  async function subscribe() {
+    setBusy(true);
+    try {
+      if (Notification.permission !== 'granted') {
+        const p = await Notification.requestPermission();
+        setPermission(p);
+        if (p !== 'granted') {
+          toast.warn('Permission denied · no notifications until you allow them');
+          return;
+        }
+      }
+      const { public_key } = await fetchPushVapidKey();
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlB64ToUint8Array(public_key),
+      });
+      const payload = sub.toJSON();
+      await subscribePush({
+        endpoint: payload.endpoint,
+        keys: payload.keys,
+        user_agent: navigator.userAgent,
+      });
+      toast.success('Subscribed · a test push will arrive shortly');
+      await refresh();
+      await testPush();
+    } catch (err) {
+      const msg = errMsg(err) || '';
+      if (msg.toLowerCase().includes('denied')) {
+        toast.warn('Your browser refused the subscription — usually a self-signed-cert issue. Accept the cert in a fresh tab and try again.');
+      } else {
+        toast.error(err);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unsubscribe() {
+    setBusy(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        const ep = sub.endpoint;
+        await sub.unsubscribe();
+        await unsubscribePush(ep).catch(() => {});
+      }
+      toast.success('Unsubscribed');
+      await refresh();
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeOther(endpointPreview) {
+    // Server only stores endpoint, not a stable ID exposed to the UI
+    // that matches what the browser has. For safety, we only allow
+    // removing *this* device; cross-device pruning happens via the
+    // server's 410 cleanup when a push attempt fails.
+    toast.info('Open the other device and click Unsubscribe there. Dead devices are auto-pruned when a push fails.');
+  }
+
+  if (!supported) {
+    return (
+      <Card className={className}>
+        <CardHeader>
+          <CardTitleGroup>
+            <div className="flex items-center gap-2">
+              <BellOff className="size-4 text-muted-foreground" />
+              <CardTitle>Push notifications</CardTitle>
+            </div>
+            <CardDescription>Not supported in this browser</CardDescription>
+          </CardTitleGroup>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground">
+            Your browser doesn&rsquo;t support the Push API, or you&rsquo;re running over an
+            insecure origin. Safari over a self-signed LAN cert often lands here — use
+            email or Telegram notifications instead.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className={className}>
+      <CardHeader>
+        <CardTitleGroup>
+          <div className="flex items-center gap-2">
+            <Bell className="size-4 text-muted-foreground" />
+            <CardTitle>Push notifications</CardTitle>
+          </div>
+          <CardDescription>
+            {hasLocal
+              ? 'This device is subscribed. Warn-severity alerts arrive as native notifications.'
+              : 'Subscribe this device to get alerts as native notifications on your phone/desktop.'}
+          </CardDescription>
+        </CardTitleGroup>
+        <div className="flex items-center gap-2">
+          {permission === 'denied' && <Badge variant="danger" className="uppercase">blocked</Badge>}
+          {hasLocal && <Badge variant="success" className="uppercase">active</Badge>}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap gap-2">
+          {!hasLocal ? (
+            <Button size="sm" onClick={subscribe} disabled={busy || permission === 'denied'}>
+              <Bell />
+              {busy ? 'Working…' : 'Enable on this device'}
+            </Button>
+          ) : (
+            <>
+              <Button size="sm" variant="outline" onClick={() => testPush().then(() => toast.info('Test sent'))} disabled={busy}>
+                <Send />
+                Send test
+              </Button>
+              <Button size="sm" variant="ghost" onClick={unsubscribe} disabled={busy}>
+                <BellOff />
+                Disable on this device
+              </Button>
+            </>
+          )}
+        </div>
+
+        {permission === 'denied' && (
+          <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+            Notifications were blocked for this site. Open your browser&rsquo;s site settings
+            to re-enable, then click Enable again.
+          </p>
+        )}
+
+        {subs && subs.length > 0 && (
+          <div>
+            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Your enrolled devices ({subs.length})
+            </div>
+            <ul className="divide-y divide-border rounded-md border border-border bg-background/40 text-xs">
+              {subs.map((s) => (
+                <li key={s.id} className="flex items-center justify-between gap-2 px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="truncate">{s.user_agent || 'Unknown device'}</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      added {formatRelative(s.created_at)}
+                      {s.last_seen_at && ` · last seen ${formatRelative(s.last_seen_at)}`}
+                    </div>
+                  </div>
+                  <Button size="sm" variant="ghost" onClick={() => removeOther(s.endpoint_preview)}>
+                    remove
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <p className="text-[11px] text-muted-foreground">
+          Self-signed HTTPS works after you accept the cert in this browser. Safari on iOS
+          does not support push over self-signed origins — use another channel for iPhones
+          until you put a real cert in front.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+// VAPID keys are URL-safe base64; the Push API wants a Uint8Array.
+function urlB64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
+  return out;
 }
 
 function errMsg(err) {
