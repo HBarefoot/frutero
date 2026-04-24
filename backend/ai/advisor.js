@@ -1,4 +1,5 @@
 const { Q } = require('../database');
+const batches = require('../batches');
 const { SYSTEM_PROMPT, buildContext, userPrompt } = require('./prompt');
 const anthropic = require('./providers/anthropic');
 const ollama = require('./providers/ollama');
@@ -109,6 +110,7 @@ async function runOnce({ force = false } = {}) {
     };
   }
 
+  const batch_id = batches.getActiveBatchId();
   for (const ins of insights) {
     Q.insertAIInsight({
       provider: cfg.provider,
@@ -121,6 +123,7 @@ async function runOnce({ force = false } = {}) {
       input_tokens: raw.input_tokens,
       output_tokens: raw.output_tokens,
       latency_ms: latency,
+      batch_id,
     });
   }
 

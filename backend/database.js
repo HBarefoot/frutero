@@ -172,6 +172,41 @@ function init() {
     CREATE INDEX IF NOT EXISTS idx_ai_insights_timestamp ON ai_insights(timestamp);
     CREATE INDEX IF NOT EXISTS idx_ai_insights_status ON ai_insights(status);
 
+    -- A batch is one substrate run through its lifecycle. Every activity
+    -- from sensor reading to relay transition to AI insight can attach
+    -- to a batch, so the system can answer "how did this batch compare
+    -- to the last?" Single active batch at a time (multi-chamber comes
+    -- with Phase 7 fleet layer).
+    CREATE TABLE IF NOT EXISTS batches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      species_key TEXT,
+      phase TEXT NOT NULL DEFAULT 'colonization'
+        CHECK(phase IN ('colonization','pinning','fruiting','harvested','culled')),
+      started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      ended_at DATETIME,
+      parent_batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+      notes TEXT,
+      yield_grams REAL,
+      cull_reason TEXT,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_batches_ended_at ON batches(ended_at);
+
+    -- Timestamped journal entries against a batch (phase changes, grower
+    -- observations, yield adjustments, arbitrary notes).
+    CREATE TABLE IF NOT EXISTS batch_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      kind TEXT NOT NULL,
+      detail TEXT,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_batch_events_batch ON batch_events(batch_id);
+
     -- Generic actuator registry. Replaces hardcoded fan/light pin config.
     -- key is referenced by schedules.device and device_log.device.
     CREATE TABLE IF NOT EXISTS actuators (
@@ -191,6 +226,11 @@ function init() {
   // Additive migration: add user_id to device_log for attribution on
   // existing installs where the column didn't originally exist.
   ensureColumn('device_log', 'user_id', 'INTEGER REFERENCES users(id)');
+
+  // Phase 8 M1: attach device transitions + AI insights to a batch.
+  // Existing rows stay NULL (pre-batch era) and queries handle that.
+  ensureColumn('device_log', 'batch_id', 'INTEGER REFERENCES batches(id) ON DELETE SET NULL');
+  ensureColumn('ai_insights', 'batch_id', 'INTEGER REFERENCES batches(id) ON DELETE SET NULL');
 
   seedIfEmpty();
   seedActuatorsIfEmpty();
@@ -344,19 +384,20 @@ const Q = {
       .get(`-${hours} hours`);
   },
 
-  insertDeviceLog(device, state, trigger, userId = null) {
+  insertDeviceLog(device, state, trigger, userId = null, batchId = null) {
     return getDb()
       .prepare(
-        'INSERT INTO device_log (device, state, trigger, user_id) VALUES (?, ?, ?, ?)'
+        'INSERT INTO device_log (device, state, trigger, user_id, batch_id) VALUES (?, ?, ?, ?, ?)'
       )
-      .run(device, state ? 1 : 0, trigger, userId);
+      .run(device, state ? 1 : 0, trigger, userId, batchId);
   },
 
   getDeviceLog(limit) {
     return getDb()
       .prepare(
         `SELECT dl.id, dl.timestamp, dl.device, dl.state, dl.trigger,
-                dl.user_id, u.name AS user_name, u.email AS user_email
+                dl.user_id, dl.batch_id,
+                u.name AS user_name, u.email AS user_email
          FROM device_log dl
          LEFT JOIN users u ON u.id = dl.user_id
          ORDER BY dl.timestamp DESC
@@ -673,13 +714,13 @@ const Q = {
   },
 
   // AI insights
-  insertAIInsight({ provider, model, category, severity, title, body, actions, input_tokens, output_tokens, latency_ms }) {
+  insertAIInsight({ provider, model, category, severity, title, body, actions, input_tokens, output_tokens, latency_ms, batch_id }) {
     return getDb()
       .prepare(
         `INSERT INTO ai_insights
            (provider, model, category, severity, title, body, actions,
-            input_tokens, output_tokens, latency_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            input_tokens, output_tokens, latency_ms, batch_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         provider,
@@ -692,20 +733,21 @@ const Q = {
         input_tokens ?? null,
         output_tokens ?? null,
         latency_ms ?? null,
+        batch_id ?? null,
       );
   },
 
-  listAIInsights(limit = 50) {
+  listAIInsights(limit = 50, { batch_id } = {}) {
+    const base = `SELECT id, timestamp, provider, model, category, severity, title, body, actions,
+                         status, status_changed_at, status_changed_by,
+                         input_tokens, output_tokens, latency_ms, batch_id
+                  FROM ai_insights`;
+    const where = batch_id != null ? ' WHERE batch_id = ?' : '';
+    const sql = `${base}${where} ORDER BY timestamp DESC LIMIT ?`;
+    const args = batch_id != null ? [batch_id, limit] : [limit];
     return getDb()
-      .prepare(
-        `SELECT id, timestamp, provider, model, category, severity, title, body, actions,
-                status, status_changed_at, status_changed_by,
-                input_tokens, output_tokens, latency_ms
-         FROM ai_insights
-         ORDER BY timestamp DESC
-         LIMIT ?`
-      )
-      .all(limit)
+      .prepare(sql)
+      .all(...args)
       .map((r) => ({ ...r, actions: r.actions ? JSON.parse(r.actions) : [] }));
   },
 
@@ -723,6 +765,118 @@ const Q = {
     return getDb()
       .prepare(`SELECT COUNT(*) AS n FROM ai_insights WHERE timestamp >= datetime('now', ?)`)
       .get(`-${hours} hours`).n;
+  },
+
+  // --- Batches --------------------------------------------------------
+  // Single-active-batch invariant: a batch with ended_at IS NULL is the
+  // active one. Callers must archive the previous active before starting
+  // a new one — enforced at the route layer.
+  getActiveBatch() {
+    return getDb()
+      .prepare(
+        `SELECT id, name, species_key, phase, started_at, ended_at,
+                parent_batch_id, notes, yield_grams, cull_reason, created_by
+         FROM batches
+         WHERE ended_at IS NULL
+         ORDER BY started_at DESC
+         LIMIT 1`
+      )
+      .get() || null;
+  },
+
+  getBatch(id) {
+    return getDb()
+      .prepare(
+        `SELECT id, name, species_key, phase, started_at, ended_at,
+                parent_batch_id, notes, yield_grams, cull_reason, created_by
+         FROM batches WHERE id = ?`
+      )
+      .get(id) || null;
+  },
+
+  listBatches({ include_archived = true, limit = 100 } = {}) {
+    const where = include_archived ? '' : 'WHERE ended_at IS NULL';
+    return getDb()
+      .prepare(
+        `SELECT id, name, species_key, phase, started_at, ended_at,
+                parent_batch_id, yield_grams, cull_reason
+         FROM batches ${where}
+         ORDER BY started_at DESC
+         LIMIT ?`
+      )
+      .all(limit);
+  },
+
+  insertBatch({ name, species_key, phase = 'colonization', parent_batch_id = null, notes = null, created_by = null }) {
+    return getDb()
+      .prepare(
+        `INSERT INTO batches (name, species_key, phase, parent_batch_id, notes, created_by)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(name, species_key, phase, parent_batch_id, notes, created_by);
+  },
+
+  updateBatch(id, fields) {
+    const allowed = ['name', 'species_key', 'phase', 'notes', 'yield_grams', 'cull_reason', 'ended_at'];
+    const sets = [];
+    const vals = [];
+    for (const k of allowed) {
+      if (fields[k] !== undefined) {
+        sets.push(`${k} = ?`);
+        vals.push(fields[k]);
+      }
+    }
+    if (sets.length === 0) return { changes: 0 };
+    vals.push(id);
+    return getDb()
+      .prepare(`UPDATE batches SET ${sets.join(', ')} WHERE id = ?`)
+      .run(...vals);
+  },
+
+  archiveBatch(id) {
+    return getDb()
+      .prepare(`UPDATE batches SET ended_at = CURRENT_TIMESTAMP WHERE id = ? AND ended_at IS NULL`)
+      .run(id);
+  },
+
+  deleteBatch(id) {
+    return getDb().prepare('DELETE FROM batches WHERE id = ?').run(id);
+  },
+
+  insertBatchEvent({ batch_id, kind, detail = null, user_id = null }) {
+    return getDb()
+      .prepare(
+        `INSERT INTO batch_events (batch_id, kind, detail, user_id) VALUES (?, ?, ?, ?)`
+      )
+      .run(batch_id, kind, detail, user_id);
+  },
+
+  listBatchEvents(batch_id, limit = 200) {
+    return getDb()
+      .prepare(
+        `SELECT be.id, be.timestamp, be.kind, be.detail, be.user_id,
+                u.name AS user_name, u.email AS user_email
+         FROM batch_events be
+         LEFT JOIN users u ON u.id = be.user_id
+         WHERE be.batch_id = ?
+         ORDER BY be.timestamp DESC
+         LIMIT ?`
+      )
+      .all(batch_id, limit);
+  },
+
+  // Device-log + insight stats scoped to a batch.
+  getBatchStats(batch_id) {
+    const db = getDb();
+    const devices = db.prepare(
+      `SELECT device, COUNT(*) AS events,
+              SUM(CASE WHEN state = 1 THEN 1 ELSE 0 END) AS on_events
+       FROM device_log WHERE batch_id = ? GROUP BY device`
+    ).all(batch_id);
+    const insights = db.prepare(
+      `SELECT COUNT(*) AS n FROM ai_insights WHERE batch_id = ?`
+    ).get(batch_id).n;
+    return { devices, insights };
   },
 
   deleteSessionsForUserExcept(user_id, keepToken) {

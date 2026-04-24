@@ -7,6 +7,7 @@ import {
   Camera,
   Cpu,
   FileSearch,
+  FlaskConical,
   Gauge,
   HardDrive,
   Leaf,
@@ -21,6 +22,7 @@ import { cn } from '@/lib/cn';
 
 const PRIMARY_NAV = [
   { to: '/', label: 'Dashboard', icon: Gauge, end: true },
+  { to: '/batches', label: 'Batches', icon: FlaskConical },
   { to: '/devices', label: 'Devices', icon: Cpu },
   { to: '/camera', label: 'Live Camera', icon: Camera },
   { to: '/schedules', label: 'Schedules', icon: CalendarClock },

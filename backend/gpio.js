@@ -1,6 +1,7 @@
 const config = require('./config');
 const ws = require('./ws');
 const { Q } = require('./database');
+const batches = require('./batches');
 
 // Low-level trigger relay module:
 //   Pin LOW (0)  → coil energized → NO contact closed, NC contact open
@@ -310,7 +311,7 @@ function applyStateInternal(key, on, trigger, userId, bypassSafety) {
   recordTransition(key, on, trigger);
 
   try {
-    Q.insertDeviceLog(key, on, trigger, userId);
+    Q.insertDeviceLog(key, on, trigger, userId, batches.getActiveBatchId());
   } catch (err) {
     console.error('[gpio] device log insert failed:', err);
   }

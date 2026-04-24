@@ -41,8 +41,26 @@ function buildContext() {
   const alertHistory = Q.getAlertHistory(10);
   const recentActivity = Q.getDeviceLog(15);
 
+  const activeBatch = Q.getActiveBatch();
+  const batchEvents = activeBatch ? Q.listBatchEvents(activeBatch.id, 20) : [];
+  const daysInBatch = activeBatch
+    ? Math.floor((Date.now() - new Date(activeBatch.started_at).getTime()) / 86400000)
+    : null;
+
   const snapshot = {
     timestamp: new Date().toISOString(),
+    batch: activeBatch ? {
+      id: activeBatch.id,
+      name: activeBatch.name,
+      species: activeBatch.species_key,
+      phase: activeBatch.phase,
+      started_at: activeBatch.started_at,
+      days_elapsed: daysInBatch,
+      notes: activeBatch.notes,
+      recent_events: batchEvents.slice(0, 10).map((e) => ({
+        at: e.timestamp, kind: e.kind, detail: e.detail,
+      })),
+    } : null,
     species: {
       current: settings.species || null,
       presets: Object.fromEntries(

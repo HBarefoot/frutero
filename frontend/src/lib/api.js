@@ -119,6 +119,32 @@ export async function runAIAdvisor() {
   return (await api.post('/ai/run')).data;
 }
 
+// --- Batches ---------------------------------------------------------
+export async function fetchBatches() {
+  return (await api.get('/batches')).data;
+}
+export async function fetchActiveBatch() {
+  return (await api.get('/batches/active')).data;
+}
+export async function fetchBatch(id) {
+  return (await api.get(`/batches/${id}`)).data;
+}
+export async function createBatch(body) {
+  return (await api.post('/batches', body)).data;
+}
+export async function updateBatch(id, patch) {
+  return (await api.patch(`/batches/${id}`, patch)).data;
+}
+export async function addBatchNote(id, detail) {
+  return (await api.post(`/batches/${id}/note`, { detail })).data;
+}
+export async function archiveBatch(id) {
+  return (await api.post(`/batches/${id}/archive`)).data;
+}
+export async function deleteBatch(id) {
+  return (await api.delete(`/batches/${id}`)).data;
+}
+
 export async function fetchStatus() {
   return (await api.get('/status')).data;
 }
