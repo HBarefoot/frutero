@@ -12,6 +12,8 @@ const alerts = require('./alerts');
 const scheduler = require('./scheduler');
 const automations = require('./automations');
 const auth = require('./auth');
+const { securityHeaders } = require('./middleware/security-headers');
+const { originCheck } = require('./middleware/origin-check');
 
 const authRoutes = require('./routes/auth');
 const usersRoutes = require('./routes/users');
@@ -36,6 +38,16 @@ async function main() {
 
   const app = express();
   app.set('trust proxy', true);
+  // tlsEnabled will flip to true in M4 once the installer provisions a
+  // cert. Keeping this false for now means Helmet skips HSTS and CSP
+  // skips upgrade-insecure-requests — safe for plain-HTTP operation.
+  app.use(securityHeaders({ tlsEnabled: !!config.TLS_ENABLED }));
+  app.use(originCheck({
+    trustedOrigins: (process.env.TRUSTED_ORIGINS || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  }));
   app.use(express.json({ limit: '64kb' }));
   app.use(cookieParser());
   app.use(auth.attachUser);

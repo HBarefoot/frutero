@@ -31,6 +31,14 @@ module.exports = {
 
   PORT: parseInt(process.env.PORT, 10) || 3000,
 
+  // TLS: filled in by M4 (installer provisions cert + flips these). When
+  // TLS is active, Helmet also emits HSTS and CSP adds
+  // upgrade-insecure-requests.
+  TLS_ENABLED: process.env.TLS_ENABLED === 'true',
+  TLS_KEY_PATH: process.env.TLS_KEY_PATH || '',
+  TLS_CERT_PATH: process.env.TLS_CERT_PATH || '',
+  HTTPS_PORT: parseInt(process.env.HTTPS_PORT, 10) || 3443,
+
   DB_PATH: process.env.DB_PATH || path.join(__dirname, 'mushroom.db'),
 
   // Static asset dir. Default 'public' keeps prod pointing at the baked-in
