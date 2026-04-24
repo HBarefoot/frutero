@@ -141,6 +141,9 @@ export async function addBatchNote(id, detail) {
 export async function archiveBatch(id) {
   return (await api.post(`/batches/${id}/archive`)).data;
 }
+export async function summarizeBatch(id) {
+  return (await api.post(`/batches/${id}/summarize`)).data;
+}
 export async function deleteBatch(id) {
   return (await api.delete(`/batches/${id}`)).data;
 }

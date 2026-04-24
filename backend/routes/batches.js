@@ -246,8 +246,44 @@ router.post('/batches/:id/archive', (req, res) => {
     console.error('[batches] archive timelapse hook error:', err);
   }
 
+  // Fire-and-forget AI retrospective. Only runs if the advisor is
+  // configured + enabled; parse failures are logged but don't block.
+  try {
+    const batchSummary = require('../ai/batch-summary');
+    batchSummary.summarize(id)
+      .then((r) => {
+        if (!r.ok && !r.skipped) {
+          console.error('[batches] archive summary failed:', r.error);
+        }
+      })
+      .catch((err) => console.error('[batches] archive summary error:', err));
+  } catch (err) {
+    console.error('[batches] archive summary hook error:', err);
+  }
+
   auth.logAudit(req, 'batch.archive', `batch:${id}`);
   res.json({ batch: serialize(Q.getBatch(id)) });
+});
+
+// POST /api/batches/:id/summarize — on-demand AI retrospective. Same
+// fire-and-forget shape as /ai/run: returns immediately, frontend
+// polls listAIInsights for the new summary row to appear.
+router.post('/batches/:id/summarize', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'bad id' });
+  if (!Q.getBatch(id)) return res.status(404).json({ error: 'not_found' });
+
+  const batchSummary = require('../ai/batch-summary');
+  batchSummary.summarize(id, { force: true })
+    .then((r) => {
+      if (!r.ok && !r.skipped) {
+        console.error(`[batches] manual summary failed for ${id}:`, r.error);
+      }
+    })
+    .catch((err) => console.error(`[batches] manual summary error for ${id}:`, err));
+
+  auth.logAudit(req, 'batch.summarize', `batch:${id}`);
+  res.status(202).json({ started: true });
 });
 
 // DELETE /api/batches/:id — hard delete. Admin-only since it nukes history.

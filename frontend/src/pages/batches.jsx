@@ -7,10 +7,12 @@ import {
   FlaskConical,
   Layers,
   Leaf,
+  Loader2,
   MessageSquarePlus,
   NotebookPen,
   Play,
   Plus,
+  Sparkles,
   Sprout,
   Trash2,
 } from 'lucide-react';
@@ -42,6 +44,7 @@ import {
   deleteBatch,
   fetchBatch,
   fetchBatches,
+  summarizeBatch,
   updateBatch,
 } from '@/lib/api';
 import { formatRelative, formatDateTime } from '@/lib/format';
@@ -301,6 +304,43 @@ function BatchDetail({ detail, canMutate, onChange }) {
     finally { setBusy(false); }
   }
 
+  // AI retrospectives land async (provider may be slow). Poll the
+  // detail endpoint until a new summary appears.
+  const [summarizing, setSummarizing] = useState(false);
+  const summaryInsight = detail.insights?.find((i) => i.category === 'summary') || null;
+  const otherInsights = detail.insights?.filter((i) => i.category !== 'summary') || [];
+
+  async function onGenerateSummary() {
+    setSummarizing(true);
+    const baselineId = summaryInsight?.id || 0;
+    try {
+      await summarizeBatch(b.id);
+      toast.info('Generating retrospective…');
+      const started = Date.now();
+      const poll = setInterval(async () => {
+        try {
+          const fresh = await fetchBatch(b.id);
+          const newSummary = fresh.insights?.find((i) => i.category === 'summary' && i.id > baselineId);
+          if (newSummary) {
+            clearInterval(poll);
+            setSummarizing(false);
+            toast.success('Retrospective ready');
+            await onChange();
+            return;
+          }
+          if (Date.now() - started > 3 * 60 * 1000) {
+            clearInterval(poll);
+            setSummarizing(false);
+            toast.warn('Still working · check back in a minute');
+          }
+        } catch { /* keep polling */ }
+      }, 3000);
+    } catch (err) {
+      toast.error(err);
+      setSummarizing(false);
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -416,13 +456,41 @@ function BatchDetail({ detail, canMutate, onChange }) {
           )}
         </div>
 
-        {detail.insights?.length > 0 && (
+        <div>
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              AI retrospective
+            </div>
+            {canMutate && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onGenerateSummary}
+                disabled={summarizing || busy}
+              >
+                {summarizing ? <Loader2 className="animate-spin" /> : <Sparkles />}
+                {summaryInsight ? 'Regenerate' : 'Generate retrospective'}
+              </Button>
+            )}
+          </div>
+          {summaryInsight ? (
+            <SummaryInsightCard insight={summaryInsight} />
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {summarizing
+                ? 'Working on a retrospective — provider response times vary.'
+                : 'No retrospective yet. Archived batches auto-generate one; you can also trigger one now.'}
+            </p>
+          )}
+        </div>
+
+        {otherInsights.length > 0 && (
           <div>
             <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              AI insights for this batch
+              Other AI insights for this batch
             </div>
             <ul className="space-y-2">
-              {detail.insights.map((ins) => (
+              {otherInsights.map((ins) => (
                 <li key={ins.id} className="rounded-md border border-border bg-background/40 p-2.5 text-xs">
                   <div className="flex items-center gap-1.5">
                     <Badge variant="outline" className="text-[10px] uppercase">{ins.category}</Badge>
@@ -584,4 +652,87 @@ function NewBatchCard({ species_presets, activeBatch, onCreated }) {
       </CardContent>
     </Card>
   );
+}
+
+// ---------- Summary insight card ----------
+
+const HEALTH_BADGE = {
+  excellent: 'success',
+  good: 'success',
+  mixed: 'warning',
+  poor: 'danger',
+};
+
+// The batch retrospective is stored as a single ai_insights row with
+// category 'summary'. The body is markdown-ish (bolded section heads
+// + "- " bullets) rendered in-place; we avoid a full markdown parser
+// since the shape is fully controlled by our own prompt.
+function SummaryInsightCard({ insight }) {
+  const sections = parseSummaryBody(insight.body);
+  const rating = sections.rating?.toLowerCase() || null;
+  const badgeVariant = HEALTH_BADGE[rating] || 'outline';
+  return (
+    <div className="rounded-md border border-border bg-background/40 p-3 text-xs space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {rating && (
+          <Badge variant={badgeVariant} className="uppercase">{rating}</Badge>
+        )}
+        <span className="text-[11px] text-muted-foreground">
+          {formatRelative(insight.timestamp)}
+        </span>
+      </div>
+      <div className="font-semibold text-foreground">{insight.title}</div>
+      {sections.highlights?.length > 0 && (
+        <SummaryBullets label="Highlights" items={sections.highlights} />
+      )}
+      {sections.concerns?.length > 0 && (
+        <SummaryBullets label="Concerns" items={sections.concerns} tone="warning" />
+      )}
+      {sections.lessons?.length > 0 && (
+        <SummaryBullets label="Lessons for next run" items={sections.lessons} tone="accent" />
+      )}
+    </div>
+  );
+}
+
+function SummaryBullets({ label, items, tone }) {
+  const dot = tone === 'warning'
+    ? 'bg-warning'
+    : tone === 'accent'
+      ? 'bg-primary'
+      : 'bg-muted-foreground/50';
+  return (
+    <div>
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <ul className="space-y-1">
+        {items.map((s, i) => (
+          <li key={i} className="flex items-start gap-2">
+            <div className={cn('mt-1 size-1.5 shrink-0 rounded-full', dot)} />
+            <span className="flex-1">{s}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function parseSummaryBody(body) {
+  const out = { rating: null, highlights: [], concerns: [], lessons: [] };
+  if (typeof body !== 'string') return out;
+  const lines = body.split('\n').map((l) => l.trim());
+  let current = null;
+  for (const line of lines) {
+    if (!line) { continue; }
+    const ratingMatch = line.match(/^\*\*Rating:\*\*\s*(.+)$/i);
+    if (ratingMatch) { out.rating = ratingMatch[1].trim(); current = null; continue; }
+    if (/^\*\*Highlights\*\*/i.test(line)) { current = 'highlights'; continue; }
+    if (/^\*\*Concerns\*\*/i.test(line)) { current = 'concerns'; continue; }
+    if (/^\*\*Lessons/i.test(line)) { current = 'lessons'; continue; }
+    if (current && line.startsWith('- ')) {
+      out[current].push(line.slice(2).trim());
+    }
+  }
+  return out;
 }
