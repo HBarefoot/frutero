@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const bcrypt = require('bcryptjs');
 const { Q } = require('./database');
+const { loginThrottle } = require('./throttle');
 
 const SESSION_COOKIE = 'frutero_session';
 const SESSION_TTL_DAYS = 30;
@@ -8,14 +9,6 @@ const SESSION_REFRESH_WINDOW_MS = 24 * 60 * 60 * 1000;       // refresh expiry i
 const INVITE_TTL_HOURS = 72;
 const BCRYPT_COST = 12;
 const MIN_PASSWORD_LENGTH = 10;
-
-// Simple in-memory IP-based failed-login throttle.
-//   5 consecutive failures → 15 min lockout.
-// Not a full rate limiter; a reverse proxy (nginx) should be authoritative
-// once we're deployed behind one. Resets on server restart.
-const FAILS = new Map();
-const FAIL_THRESHOLD = 5;
-const LOCKOUT_MS = 15 * 60 * 1000;
 
 const ROLES = ['owner', 'operator', 'viewer'];
 
@@ -157,30 +150,21 @@ function clearSessionCookie(res) {
   res.clearCookie(SESSION_COOKIE, { path: '/', httpOnly: true, sameSite: 'lax' });
 }
 
-// --- Throttle ---------------------------------------------------------
+// --- Throttle (back-compat wrappers) ---------------------------------
+// Delegated to backend/throttle.js. Kept here so existing callers that
+// imported from './auth' don't break. The three login throttles move
+// through the loginThrottle instance.
 
 function isThrottled(ip) {
-  if (!ip) return false;
-  const entry = FAILS.get(ip);
-  if (!entry) return false;
-  if (entry.count < FAIL_THRESHOLD) return false;
-  if (Date.now() - entry.lastAt > LOCKOUT_MS) {
-    FAILS.delete(ip);
-    return false;
-  }
-  return true;
+  return loginThrottle.isThrottled(ip).throttled;
 }
 
 function recordFail(ip) {
-  if (!ip) return;
-  const entry = FAILS.get(ip) || { count: 0, lastAt: 0 };
-  entry.count += 1;
-  entry.lastAt = Date.now();
-  FAILS.set(ip, entry);
+  loginThrottle.recordFail(ip);
 }
 
 function resetFails(ip) {
-  if (ip) FAILS.delete(ip);
+  loginThrottle.reset(ip);
 }
 
 // --- Middleware -------------------------------------------------------

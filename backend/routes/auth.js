@@ -2,8 +2,17 @@ const express = require('express');
 const auth = require('../auth');
 const hardware = require('../hardware');
 const { Q } = require('../database');
+const {
+  loginThrottle,
+  registerThrottle,
+  resetThrottle,
+  inviteAcceptThrottle,
+  throttleMiddleware,
+} = require('../throttle');
 
 const router = express.Router();
+
+const byIp = { extract: (req) => auth.ipOf(req) };
 
 // First-run-only hardware scan — lets the setup wizard show what the Pi
 // detected before any owner account exists. Locks itself after the first
@@ -34,7 +43,10 @@ router.get('/auth/bootstrap', (req, res) => {
  * First-run endpoint. Creates the initial owner account. Available only
  * while no users exist; returns 409 otherwise.
  */
-router.post('/auth/setup', auth.requireFirstRun, async (req, res) => {
+router.post('/auth/setup',
+  throttleMiddleware(registerThrottle, byIp),
+  auth.requireFirstRun,
+  async (req, res) => {
   const { email, name, password } = req.body || {};
 
   if (!auth.validateEmail(email))
@@ -69,43 +81,40 @@ router.post('/auth/setup', auth.requireFirstRun, async (req, res) => {
   }
 });
 
-router.post('/auth/login', async (req, res) => {
-  const ip = auth.ipOf(req);
+router.post('/auth/login',
+  throttleMiddleware(loginThrottle, byIp),
+  async (req, res) => {
+    const ip = auth.ipOf(req);
+    const { email, password } = req.body || {};
+    if (!auth.validateEmail(email) || typeof password !== 'string') {
+      loginThrottle.recordFail(ip);
+      return res.status(400).json({ error: 'invalid_credentials' });
+    }
 
-  if (auth.isThrottled(ip)) {
-    return res.status(429).json({ error: 'too_many_attempts' });
-  }
+    const row = Q.findUserByEmail(email.trim());
+    if (!row || row.disabled) {
+      loginThrottle.recordFail(ip);
+      auth.logAudit(req, 'auth.login_fail', null, { email, reason: 'no_user_or_disabled' });
+      return res.status(401).json({ error: 'invalid_credentials' });
+    }
 
-  const { email, password } = req.body || {};
-  if (!auth.validateEmail(email) || typeof password !== 'string') {
-    auth.recordFail(ip);
-    return res.status(400).json({ error: 'invalid_credentials' });
-  }
+    const ok = await auth.verifyPassword(password, row.password_hash);
+    if (!ok) {
+      loginThrottle.recordFail(ip);
+      auth.logAudit(req, 'auth.login_fail', `user:${row.id}`, { reason: 'bad_password' });
+      return res.status(401).json({ error: 'invalid_credentials' });
+    }
 
-  const row = Q.findUserByEmail(email.trim());
-  if (!row || row.disabled) {
-    auth.recordFail(ip);
-    auth.logAudit(req, 'auth.login_fail', null, { email, reason: 'no_user_or_disabled' });
-    return res.status(401).json({ error: 'invalid_credentials' });
-  }
+    loginThrottle.reset(ip);
+    const { token } = auth.createSession(row, req);
+    auth.setSessionCookie(res, token, req.protocol === 'https');
+    req.user = { id: row.id, email: row.email, name: row.name, role: row.role };
+    auth.logAudit(req, 'auth.login', `user:${row.id}`, null);
 
-  const ok = await auth.verifyPassword(password, row.password_hash);
-  if (!ok) {
-    auth.recordFail(ip);
-    auth.logAudit(req, 'auth.login_fail', `user:${row.id}`, { reason: 'bad_password' });
-    return res.status(401).json({ error: 'invalid_credentials' });
-  }
-
-  auth.resetFails(ip);
-  const { token } = auth.createSession(row, req);
-  auth.setSessionCookie(res, token, req.protocol === 'https');
-  req.user = { id: row.id, email: row.email, name: row.name, role: row.role };
-  auth.logAudit(req, 'auth.login', `user:${row.id}`, null);
-
-  res.json({
-    user: { id: row.id, email: row.email, name: row.name, role: row.role },
+    res.json({
+      user: { id: row.id, email: row.email, name: row.name, role: row.role },
+    });
   });
-});
 
 router.post('/auth/logout', (req, res) => {
   if (req.sessionToken) {
@@ -132,9 +141,15 @@ router.get('/auth/invite/:token', (req, res) => {
   res.json({ email: inv.email, role: inv.role, expires_at: inv.expires_at });
 });
 
-router.post('/auth/invite/:token/accept', async (req, res) => {
+router.post('/auth/invite/:token/accept',
+  throttleMiddleware(inviteAcceptThrottle, byIp),
+  async (req, res) => {
+  const ip = auth.ipOf(req);
   const inv = Q.findPendingInvite(req.params.token);
-  if (!inv) return res.status(404).json({ error: 'invalid_or_expired' });
+  if (!inv) {
+    inviteAcceptThrottle.recordFail(ip);
+    return res.status(404).json({ error: 'invalid_or_expired' });
+  }
 
   const { name, password } = req.body || {};
   if (!name || typeof name !== 'string' || name.trim().length < 1)
@@ -164,6 +179,7 @@ router.post('/auth/invite/:token/accept', async (req, res) => {
       invite: inv.token.slice(0, 8) + '…',
       role: inv.role,
     });
+    inviteAcceptThrottle.reset(ip);
     res.status(201).json({
       user: { id: user.id, email: user.email, name: user.name, role: user.role },
     });
@@ -182,9 +198,15 @@ router.get('/auth/reset/:token', (req, res) => {
   res.json({ email: row.email, name: row.name, expires_at: row.expires_at });
 });
 
-router.post('/auth/reset/:token', async (req, res) => {
+router.post('/auth/reset/:token',
+  throttleMiddleware(resetThrottle, byIp),
+  async (req, res) => {
+  const ip = auth.ipOf(req);
   const row = Q.findPendingReset(req.params.token);
-  if (!row) return res.status(404).json({ error: 'invalid_or_expired' });
+  if (!row) {
+    resetThrottle.recordFail(ip);
+    return res.status(404).json({ error: 'invalid_or_expired' });
+  }
 
   const { new_password } = req.body || {};
   const pwErr = auth.validatePassword(new_password);
@@ -207,6 +229,7 @@ router.post('/auth/reset/:token', async (req, res) => {
     auth.logAudit(req, 'auth.reset_password', `user:${user.id}`, {
       reset_token: row.token.slice(0, 8),
     });
+    resetThrottle.reset(ip);
     res.status(200).json({ user: req.user });
   } catch (err) {
     console.error('[auth] reset failed:', err);
