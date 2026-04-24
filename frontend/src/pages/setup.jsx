@@ -21,7 +21,7 @@ import { fetchSetupHardwareScan } from '@/lib/api';
 
 export default function SetupPage() {
   const { needsSetup, isAuthed, setupOwner } = useAuth();
-  const [step, setStep] = useState('scan'); // 'scan' | 'account'
+  const [step, setStep] = useState('scan'); // 'scan' | 'account' | 'restore'
   const [scan, setScan] = useState(null);
   const [scanBusy, setScanBusy] = useState(false);
   const [scanError, setScanError] = useState(null);
@@ -45,6 +45,10 @@ export default function SetupPage() {
         setupOwner={setupOwner}
       />
     );
+  }
+
+  if (step === 'restore') {
+    return <RestoreStep onBack={() => setStep('scan')} />;
   }
 
   return (
@@ -81,10 +85,110 @@ export default function SetupPage() {
 
         <ScanSummary scan={scan} busy={scanBusy} />
 
-        <Button className="w-full" onClick={() => setStep('account')}>
-          Continue — create owner account
-        </Button>
+        <div className="space-y-2">
+          <Button className="w-full" onClick={() => setStep('account')}>
+            Continue — create owner account
+          </Button>
+          <Button variant="outline" className="w-full" onClick={() => setStep('restore')}>
+            Restore from backup instead
+          </Button>
+        </div>
       </div>
+    </AuthLayout>
+  );
+}
+
+function RestoreStep({ onBack }) {
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [done, setDone] = useState(false);
+
+  async function onSubmit(e) {
+    e.preventDefault();
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append('backup', file);
+      const res = await fetch('/api/setup/restore', {
+        method: 'POST',
+        body: fd,
+        credentials: 'include',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+      setDone(true);
+      // Backend crashes intentionally to reload the restored DB; give
+      // systemd ~4s to bring us back before we reload.
+      setTimeout(() => window.location.assign('/'), 4000);
+    } catch (err) {
+      setError(err.message || 'Restore failed');
+      setBusy(false);
+    }
+  }
+
+  if (done) {
+    return (
+      <AuthLayout title="Restoring…" description="Backend is restarting into the restored database.">
+        <div className="flex items-center justify-center py-12">
+          <RefreshCw className="size-5 animate-spin text-primary" />
+        </div>
+        <p className="text-center text-xs text-muted-foreground">
+          Reloading in a few seconds…
+        </p>
+      </AuthLayout>
+    );
+  }
+
+  return (
+    <AuthLayout
+      title="Restore from backup"
+      description="Upload a .db file exported from another frutero installation."
+      footer={
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+        >
+          ← Back
+        </button>
+      }
+    >
+      <form onSubmit={onSubmit} className="space-y-4">
+        <div>
+          <Label htmlFor="backup-file">Backup file (.db)</Label>
+          <Input
+            id="backup-file"
+            type="file"
+            accept=".db,.sqlite,.sqlite3,application/vnd.sqlite3,application/x-sqlite3"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            className="mt-1.5"
+            required
+          />
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Downloaded from another frutero's Security page. Users, schedules,
+            actuators, settings, readings, and audit log will all be restored.
+          </p>
+        </div>
+        {error && (
+          <p className="flex items-start gap-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+            <AlertCircle className="size-3.5 shrink-0 mt-0.5" />
+            {error}
+          </p>
+        )}
+        <Button type="submit" disabled={busy || !file} className="w-full">
+          <HardDrive />
+          {busy ? 'Validating + restoring…' : 'Restore this backup'}
+        </Button>
+        <p className="text-[11px] text-muted-foreground">
+          The current empty database will be kept as{' '}
+          <code className="font-mono">mushroom.db.pre-restore-*.bak</code> on disk.
+          Restore is only available during first-run setup — to roll back later,
+          stop the service and swap the file manually.
+        </p>
+      </form>
     </AuthLayout>
   );
 }

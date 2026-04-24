@@ -4,6 +4,8 @@ import {
   AlertTriangle,
   Bug,
   CheckCircle2,
+  Download,
+  HardDrive,
   KeyRound,
   Lock,
   LockOpen,
@@ -112,6 +114,7 @@ export default function SecurityPage() {
           <TlsCard tls={data.tls} />
           <HeadersCard headers={data.headers} tlsActive={data.tls.active} />
           <TokensCard tokens={data.tokens_at_rest} />
+          <BackupCard backup={data.backup} />
           <ThrottlesCard throttles={data.throttles} />
           <SessionsCard sessions={data.sessions} className="xl:col-span-2" />
           <ClientErrorsCard errors={errors} className="xl:col-span-2" />
@@ -365,6 +368,84 @@ function SessionsCard({ sessions, className }) {
       </CardContent>
     </Card>
   );
+}
+
+// ---------- Backup ----------
+
+function BackupCard({ backup }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const last = backup?.last_backup_at;
+  const bytes = backup?.last_backup_bytes || 0;
+
+  async function download() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/security/backup', { credentials: 'include' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const cd = res.headers.get('content-disposition') || '';
+      const match = /filename="([^"]+)"/.exec(cd);
+      const name = match ? match[1] : `frutero-backup-${Date.now()}.db`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || 'Backup failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitleGroup>
+          <div className="flex items-center gap-2">
+            <HardDrive className="size-4 text-muted-foreground" />
+            <CardTitle>Backup</CardTitle>
+          </div>
+          <CardDescription>SQLite snapshot — safe while running</CardDescription>
+        </CardTitleGroup>
+      </CardHeader>
+      <CardContent>
+        <Button onClick={download} disabled={busy} variant="default" size="sm" className="w-full">
+          <Download />
+          {busy ? 'Preparing…' : 'Download backup'}
+        </Button>
+        <dl className="mt-3 space-y-1 text-[11px]">
+          <Row
+            label="Last download"
+            value={last ? formatRelative(last) : <span className="text-muted-foreground">never</span>}
+          />
+          {bytes > 0 && (
+            <Row label="Size" value={formatBytes(bytes)} />
+          )}
+        </dl>
+        <p className="mt-3 text-[11px] text-muted-foreground">
+          Restore from a backup using the setup wizard on a fresh install.
+          Keep copies off-Pi — SD card death is the #1 appliance failure mode.
+        </p>
+        {error && (
+          <div className="mt-2 rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5 text-[11px] text-danger">
+            {error}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function formatBytes(n) {
+  if (n > 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n > 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
 }
 
 // ---------- Client errors ----------

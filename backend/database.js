@@ -631,6 +631,19 @@ const Q = {
       .get(`-${hours} hours`).n;
   },
 
+  // Read/write secrets table helpers. Used by M3 backup to track
+  // last-backup timestamp, and available for future internal state.
+  getSecret(key) {
+    const row = getDb().prepare('SELECT value FROM secrets WHERE key = ?').get(key);
+    return row ? row.value : null;
+  },
+
+  setSecret(key, value) {
+    return getDb()
+      .prepare('INSERT OR REPLACE INTO secrets (key, value) VALUES (?, ?)')
+      .run(key, value);
+  },
+
   deleteSessionsForUserExcept(user_id, keepToken) {
     return getDb()
       .prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?')

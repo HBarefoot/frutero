@@ -66,6 +66,10 @@ router.get('/security', auth.requireAdmin, (_req, res) => {
     },
     throttles: throttleStats,
     sessions,
+    backup: {
+      last_backup_at: Q.getSecret('last_backup_at'),
+      last_backup_bytes: parseInt(Q.getSecret('last_backup_bytes') || '0', 10) || 0,
+    },
   });
 });
 

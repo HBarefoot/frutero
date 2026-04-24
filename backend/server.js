@@ -3,6 +3,7 @@ const https = require('https');
 const path = require('path');
 const express = require('express');
 const cookieParser = require('cookie-parser');
+const fileUpload = require('express-fileupload');
 
 const config = require('./config');
 const db = require('./database');
@@ -32,6 +33,7 @@ const mistingRoutes = require('./routes/misting');
 const cameraRoutes = require('./routes/camera');
 const securityRoutes = require('./routes/security');
 const clientErrorsRoutes = require('./routes/client-errors');
+const backupRoutes = require('./routes/backup');
 
 async function main() {
   db.init();
@@ -57,6 +59,15 @@ async function main() {
   }));
   app.use(express.json({ limit: '64kb' }));
   app.use(cookieParser());
+  // Multipart uploads only touch /api/setup/restore today. Caps prevent a
+  // trivial DoS via oversized uploads. useTempFiles streams to disk so
+  // large files never live fully in memory.
+  app.use(fileUpload({
+    limits: { fileSize: 100 * 1024 * 1024 },
+    useTempFiles: true,
+    tempFileDir: '/tmp/',
+    abortOnLimit: true,
+  }));
   app.use(auth.attachUser);
 
   // Unauthenticated healthcheck. Lightweight probe for load balancers,
@@ -85,6 +96,10 @@ async function main() {
   // invite accept). /auth/me requires a session but the router handles
   // that internally.
   app.use('/api', authRoutes);
+  // Backup + first-run restore: mounted before the global requireAuth so
+  // restore is reachable when no users exist yet. Both handlers inside
+  // gate themselves (requireAdmin / requireFirstRun).
+  app.use('/api', backupRoutes);
 
   // Everything else under /api requires an authenticated session.
   app.use('/api', auth.requireAuth);
