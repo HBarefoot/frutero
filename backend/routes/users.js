@@ -1,6 +1,6 @@
 const express = require('express');
 const auth = require('../auth');
-const { Q } = require('../database');
+const { Q, hmacToken } = require('../database');
 
 const router = express.Router();
 
@@ -92,18 +92,22 @@ router.post('/users/:id/password-reset', (req, res) => {
   if (!user) return res.status(404).json({ error: 'not_found' });
   if (user.disabled) return res.status(409).json({ error: 'user_disabled' });
 
-  const token = auth.generateToken(24);
+  // Plaintext token is returned ONCE in this response so the owner can
+  // deliver the reset link. Only the HMAC is persisted; if the plaintext
+  // is lost, the owner must revoke and reissue.
+  const plaintext = auth.generateToken(24);
+  const tokenHash = hmacToken(plaintext);
   const expires_at = auth.newInviteExpiry(); // 72h TTL, same as invites
   Q.insertPasswordReset({
-    token,
+    token: tokenHash,
     user_id: id,
     issued_by: req.user.id,
     expires_at,
   });
   auth.logAudit(req, 'user.password_reset_issued', `user:${id}`, {
-    token_preview: token.slice(0, 8),
+    token_preview: tokenHash.slice(0, 8),
   });
-  res.status(201).json({ token, expires_at, email: user.email });
+  res.status(201).json({ token: plaintext, expires_at, email: user.email });
 });
 
 /** Force-logout all sessions for a user. */
@@ -134,23 +138,29 @@ router.post('/invites', (req, res) => {
   if (Q.findUserByEmail(email.trim()))
     return res.status(409).json({ error: 'email_exists' });
 
-  const token = auth.generateToken(24);
+  // Same pattern as password reset: plaintext is returned ONCE in the
+  // creation response so the owner can build + deliver the invite URL.
+  // Only the HMAC is stored; the listing at GET /invites returns hashes.
+  const plaintext = auth.generateToken(24);
+  const tokenHash = hmacToken(plaintext);
   const expires_at = auth.newInviteExpiry();
   Q.insertInvite({
-    token,
+    token: tokenHash,
     email: email.trim(),
     role,
     created_by: req.user.id,
     expires_at,
   });
-  auth.logAudit(req, 'invite.create', `invite:${token.slice(0, 8)}`, {
+  auth.logAudit(req, 'invite.create', `invite:${tokenHash.slice(0, 8)}`, {
     email: email.trim(),
     role,
   });
-  res.status(201).json({ token, expires_at, email: email.trim(), role });
+  res.status(201).json({ token: plaintext, expires_at, email: email.trim(), role });
 });
 
 router.delete('/invites/:token', (req, res) => {
+  // The listing returns HMAC hashes, so the revoke URL carries the hash
+  // directly. No extra hashing needed here.
   Q.deleteInvite(req.params.token);
   auth.logAudit(req, 'invite.revoke', `invite:${req.params.token.slice(0, 8)}`, null);
   res.json({ ok: true });

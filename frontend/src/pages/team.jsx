@@ -272,22 +272,6 @@ function UserRow({ u, self, onReload, onIssueReset }) {
 }
 
 function InvitesCard({ invites, onReload }) {
-  const [copiedToken, setCopiedToken] = useState(null);
-
-  function inviteUrl(token) {
-    return `${window.location.origin}/invite/${token}`;
-  }
-
-  async function copy(token) {
-    try {
-      await navigator.clipboard.writeText(inviteUrl(token));
-      setCopiedToken(token);
-      setTimeout(() => setCopiedToken(null), 2000);
-    } catch {
-      // clipboard blocked — user can select manually
-    }
-  }
-
   async function revoke(token) {
     if (!confirm('Revoke this invite?')) return;
     await revokeInvite(token);
@@ -308,42 +292,40 @@ function InvitesCard({ invites, onReload }) {
             No pending invites.
           </p>
         ) : (
-          <ul className="divide-y divide-border">
-            {invites.map((inv) => (
-              <li key={inv.token} className="flex items-center justify-between gap-3 py-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="truncate">{inv.email}</span>
-                    <Badge variant={ROLE_VARIANT[inv.role]} className="uppercase">
-                      {inv.role}
-                    </Badge>
+          <>
+            <ul className="divide-y divide-border">
+              {invites.map((inv) => (
+                <li key={inv.token} className="flex items-center justify-between gap-3 py-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="truncate">{inv.email}</span>
+                      <Badge variant={ROLE_VARIANT[inv.role]} className="uppercase">
+                        {inv.role}
+                      </Badge>
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">
+                      Expires {formatDateTime(inv.expires_at)}
+                    </div>
                   </div>
-                  <div className="mt-0.5 text-[11px] text-muted-foreground">
-                    Expires {formatDateTime(inv.expires_at)}
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => revoke(inv.token)}
+                      className="text-muted-foreground hover:bg-danger/10 hover:text-danger"
+                      aria-label="Revoke invite"
+                    >
+                      <Trash2 />
+                    </Button>
                   </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => copy(inv.token)}
-                  >
-                    {copiedToken === inv.token ? <Check /> : <Copy />}
-                    {copiedToken === inv.token ? 'Copied' : 'Copy link'}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => revoke(inv.token)}
-                    className="text-muted-foreground hover:bg-danger/10 hover:text-danger"
-                    aria-label="Revoke invite"
-                  >
-                    <Trash2 />
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-[11px] text-muted-foreground">
+              Invite links are only shown at creation time and are not stored in
+              plaintext. If you missed the copy window, revoke and reissue.
+            </p>
+          </>
         )}
       </CardContent>
     </Card>
@@ -429,12 +411,13 @@ function InviteForm({ onCreated }) {
         </form>
         {success && (
           <div className="mt-4 rounded-md border border-success/30 bg-success/10 p-3 text-xs">
-            <div className="mb-1 font-medium text-success">Invite created</div>
+            <div className="mb-1 font-medium text-success">Invite created — copy now</div>
             <code className="block break-all font-mono text-[11px] text-foreground">
               {success}
             </code>
             <p className="mt-2 text-muted-foreground">
-              Expires in 72 hours. You can also find and copy it from the list on the left.
+              Expires in 72 hours. This link is stored hashed — it will not be
+              shown again. If you lose it, revoke and reissue.
             </p>
           </div>
         )}

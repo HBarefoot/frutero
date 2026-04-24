@@ -122,6 +122,16 @@ function init() {
 
     CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
 
+    -- Key/value store for server-generated secrets that must persist across
+    -- restarts: token pepper (HMAC key for hashing invites + reset tokens),
+    -- migration markers, future TLS key fingerprints, etc. Never exposed
+    -- over any API surface.
+    CREATE TABLE IF NOT EXISTS secrets (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Generic actuator registry. Replaces hardcoded fan/light pin config.
     -- key is referenced by schedules.device and device_log.device.
     CREATE TABLE IF NOT EXISTS actuators (
@@ -144,6 +154,66 @@ function init() {
 
   seedIfEmpty();
   seedActuatorsIfEmpty();
+  ensureTokenPepper();
+  migrateTokenHashesIfNeeded();
+}
+
+const crypto = require('node:crypto');
+
+// Generates (once) a 32-byte pepper used to HMAC invite + reset tokens at
+// rest. Stored in the secrets table so restarts preserve the ability to
+// verify existing hashes. Never leaves the backend.
+function ensureTokenPepper() {
+  const row = db.prepare('SELECT value FROM secrets WHERE key = ?').get('token_pepper');
+  if (row) return;
+  const pepper = crypto.randomBytes(32).toString('base64');
+  db.prepare('INSERT INTO secrets (key, value) VALUES (?, ?)').run('token_pepper', pepper);
+}
+
+function getTokenPepper() {
+  const row = db.prepare('SELECT value FROM secrets WHERE key = ?').get('token_pepper');
+  return row ? row.value : null;
+}
+
+// Deterministic at-rest hash: HMAC-SHA256 keyed by the server's pepper.
+// Same plaintext always produces the same hash, so we can index + look
+// up by hash in O(1). Pepper keeps rainbow tables useless even if the
+// DB file is exfiltrated.
+function hmacToken(plaintext) {
+  const pepper = getTokenPepper();
+  if (!pepper) throw new Error('token_pepper not initialized');
+  return crypto.createHmac('sha256', pepper).update(plaintext).digest('hex');
+}
+
+// One-time migration that walks the invites + password_resets tables and
+// replaces any plaintext tokens with their HMAC. Detection heuristic:
+// tokens stored as plaintext are 32 bytes base64url-encoded (~43 chars),
+// while our HMAC output is 64 hex chars. Anything !== 64 chars is legacy.
+// Wrapped in a transaction so partial failure rolls back. The
+// 'tokens_hashed_v1' marker prevents re-running on subsequent boots.
+function migrateTokenHashesIfNeeded() {
+  const done = db.prepare('SELECT value FROM secrets WHERE key = ?').get('tokens_hashed_v1');
+  if (done && done.value === '1') return;
+
+  const txn = db.transaction(() => {
+    const invites = db.prepare('SELECT token FROM invites WHERE length(token) != 64').all();
+    const updateInvite = db.prepare('UPDATE invites SET token = ? WHERE token = ?');
+    for (const r of invites) updateInvite.run(hmacToken(r.token), r.token);
+
+    const resets = db.prepare('SELECT token FROM password_resets WHERE length(token) != 64').all();
+    const updateReset = db.prepare('UPDATE password_resets SET token = ? WHERE token = ?');
+    for (const r of resets) updateReset.run(hmacToken(r.token), r.token);
+
+    db.prepare('INSERT OR REPLACE INTO secrets (key, value) VALUES (?, ?)')
+      .run('tokens_hashed_v1', '1');
+
+    if (invites.length || resets.length) {
+      console.log(
+        `[migrate] hashed at-rest: ${invites.length} invite(s), ${resets.length} reset(s)`
+      );
+    }
+  });
+  txn();
 }
 
 function ensureColumn(table, col, type) {
@@ -688,4 +758,4 @@ const Q = {
   },
 };
 
-module.exports = { init, getDb, Q };
+module.exports = { init, getDb, Q, hmacToken };

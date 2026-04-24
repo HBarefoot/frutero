@@ -1,7 +1,7 @@
 const express = require('express');
 const auth = require('../auth');
 const hardware = require('../hardware');
-const { Q } = require('../database');
+const { Q, hmacToken } = require('../database');
 const {
   loginThrottle,
   registerThrottle,
@@ -134,9 +134,10 @@ router.get('/auth/me', (req, res) => {
 /**
  * Preview an invite (unauthenticated). Returns the email + role the
  * invite was issued for, so the accept form can pre-fill the email field.
+ * Incoming token from the URL is plaintext; DB stores HMAC hash.
  */
 router.get('/auth/invite/:token', (req, res) => {
-  const inv = Q.findPendingInvite(req.params.token);
+  const inv = Q.findPendingInvite(hmacToken(req.params.token));
   if (!inv) return res.status(404).json({ error: 'invalid_or_expired' });
   res.json({ email: inv.email, role: inv.role, expires_at: inv.expires_at });
 });
@@ -145,7 +146,8 @@ router.post('/auth/invite/:token/accept',
   throttleMiddleware(inviteAcceptThrottle, byIp),
   async (req, res) => {
   const ip = auth.ipOf(req);
-  const inv = Q.findPendingInvite(req.params.token);
+  const tokenHash = hmacToken(req.params.token);
+  const inv = Q.findPendingInvite(tokenHash);
   if (!inv) {
     inviteAcceptThrottle.recordFail(ip);
     return res.status(404).json({ error: 'invalid_or_expired' });
@@ -193,7 +195,7 @@ router.post('/auth/invite/:token/accept',
 
 /** Preview a reset link — returns the email the reset was issued for. */
 router.get('/auth/reset/:token', (req, res) => {
-  const row = Q.findPendingReset(req.params.token);
+  const row = Q.findPendingReset(hmacToken(req.params.token));
   if (!row) return res.status(404).json({ error: 'invalid_or_expired' });
   res.json({ email: row.email, name: row.name, expires_at: row.expires_at });
 });
@@ -202,7 +204,8 @@ router.post('/auth/reset/:token',
   throttleMiddleware(resetThrottle, byIp),
   async (req, res) => {
   const ip = auth.ipOf(req);
-  const row = Q.findPendingReset(req.params.token);
+  const tokenHash = hmacToken(req.params.token);
+  const row = Q.findPendingReset(tokenHash);
   if (!row) {
     resetThrottle.recordFail(ip);
     return res.status(404).json({ error: 'invalid_or_expired' });
