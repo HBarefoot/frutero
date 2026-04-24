@@ -158,7 +158,24 @@ async function sendOnce() {
     }
     lastError = null;
     lastHeartbeatAt = new Date().toISOString();
-    return { ok: true };
+
+    // M4: pick up any pending owner-issued commands the cloud attached
+    // to this heartbeat response. Best-effort — failures are logged
+    // and reported back as command results, never thrown out of the
+    // heartbeat loop.
+    let pending = [];
+    try {
+      const body = await res.json();
+      if (Array.isArray(body?.pending_commands)) pending = body.pending_commands;
+    } catch {
+      // server returned non-JSON; skip command processing.
+    }
+    if (pending.length > 0) {
+      const results = await dispatchCommands(pending);
+      await postCommandResults(conn, results);
+    }
+
+    return { ok: true, commands_processed: pending.length };
   } catch (err) {
     lastStatus = null;
     lastError = err.name === 'AbortError' ? 'timeout' : err.message || 'network_error';
@@ -166,6 +183,78 @@ async function sendOnce() {
   } finally {
     clearTimeout(t);
     inFlight = false;
+  }
+}
+
+// Dispatch a single command against the local Pi. Each handler returns
+// {status:'completed'|'failed', result?, error?}. Throws are caught and
+// surfaced as 'failed' rather than crashing the heartbeat loop.
+async function dispatchOne(cmd) {
+  try {
+    if (cmd.kind === 'set_actuator') {
+      const { key, on } = cmd.args || {};
+      if (typeof key !== 'string' || typeof on !== 'boolean') {
+        return { status: 'failed', error: 'invalid args' };
+      }
+      gpio.setActuator(key, on, 'fleet', null);
+      return { status: 'completed', result: { key, on, state: gpio.getState(key) } };
+    }
+    if (cmd.kind === 'pulse_actuator') {
+      const { key, ms } = cmd.args || {};
+      if (typeof key !== 'string' || !Number.isInteger(ms)) {
+        return { status: 'failed', error: 'invalid args' };
+      }
+      await gpio.pulse(key, ms, null);
+      return { status: 'completed', result: { key, ms } };
+    }
+    return { status: 'failed', error: `unknown kind: ${cmd.kind}` };
+  } catch (err) {
+    if (err?.code === 'SAFETY_BLOCKED') {
+      return { status: 'failed', error: `safety_blocked: ${err.message}` };
+    }
+    return { status: 'failed', error: err?.message || 'dispatch_error' };
+  }
+}
+
+async function dispatchCommands(pending) {
+  const out = [];
+  for (const cmd of pending) {
+    const r = await dispatchOne(cmd);
+    db.Q.insertAudit({
+      user_id: null,
+      action: `fleet.command.${r.status}`,
+      target: `cmd:${cmd.id}`,
+      detail: { kind: cmd.kind, args: cmd.args, error: r.error || null },
+      ip: null,
+    });
+    out.push({ id: cmd.id, ...r });
+  }
+  return out;
+}
+
+async function postCommandResults(conn, results) {
+  if (results.length === 0) return;
+  const url = `${conn.url.replace(/\/+$/, '')}/api/devices/command-results`;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${conn.jwt}`,
+      },
+      body: JSON.stringify({ results }),
+      signal: ctrl.signal,
+    });
+  } catch (err) {
+    console.warn('[fleet] command-results POST failed:', err.message);
+    // Cloud will keep the rows in 'sent' state. The next heartbeat won't
+    // re-deliver them (they're not pending), but the operator can see
+    // 'sent' as a stuck-state hint. Future hardening: timestamp-based
+    // re-issue on the cloud side. Out of scope for M4 v1.
+  } finally {
+    clearTimeout(t);
   }
 }
 
