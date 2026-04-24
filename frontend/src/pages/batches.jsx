@@ -31,6 +31,7 @@ import { SelectNative } from '@/components/ui/select-native';
 import { PageHeader } from '@/components/layout/page-header';
 import { PageSkeleton } from '@/components/ui/skeleton';
 import { SnapshotTimeline } from '@/components/camera/snapshot-timeline';
+import { TimelapseCard } from '@/components/camera/timelapse-card';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/lib/auth-context';
 import { useStatus } from '@/lib/status-context';
@@ -119,7 +120,13 @@ export default function BatchesPage() {
                 }}
               />
               {detail.stats?.snapshots > 0 && (
-                <SnapshotTimeline batchId={detail.batch.id} />
+                <>
+                  <SnapshotTimeline batchId={detail.batch.id} />
+                  <TimelapseCard
+                    batchId={detail.batch.id}
+                    snapshotCount={detail.stats.snapshots || 0}
+                  />
+                </>
               )}
             </>
           )}

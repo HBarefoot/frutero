@@ -266,6 +266,23 @@ function init() {
     CREATE INDEX IF NOT EXISTS idx_cv_observations_batch ON cv_observations(batch_id);
     CREATE INDEX IF NOT EXISTS idx_cv_observations_timestamp ON cv_observations(timestamp);
 
+    -- Phase 9 M3: timelapse videos stitched from snapshots by ffmpeg.
+    -- Files live on disk alongside the source snapshots.
+    CREATE TABLE IF NOT EXISTS cv_timelapses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      path TEXT NOT NULL,
+      frames INTEGER NOT NULL,
+      fps INTEGER NOT NULL,
+      duration_seconds REAL,
+      size_bytes INTEGER,
+      resolution TEXT,
+      status TEXT NOT NULL DEFAULT 'ready',
+      error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_cv_timelapses_batch ON cv_timelapses(batch_id);
+
     -- Generic actuator registry. Replaces hardcoded fan/light pin config.
     -- key is referenced by schedules.device and device_log.device.
     CREATE TABLE IF NOT EXISTS actuators (
@@ -1143,6 +1160,54 @@ const Q = {
       .get(snapshot_id);
     if (!row) return null;
     return { ...row, findings: row.findings ? JSON.parse(row.findings) : [] };
+  },
+
+  // --- CV timelapses -------------------------------------------------
+  insertTimelapse({ batch_id, path, frames, fps, duration_seconds, size_bytes, resolution, status, error }) {
+    return getDb()
+      .prepare(
+        `INSERT INTO cv_timelapses
+           (batch_id, path, frames, fps, duration_seconds, size_bytes, resolution, status, error)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        batch_id ?? null,
+        path,
+        frames,
+        fps,
+        duration_seconds ?? null,
+        size_bytes ?? null,
+        resolution || null,
+        status || 'ready',
+        error || null,
+      );
+  },
+
+  listTimelapses({ batch_id, limit = 50 } = {}) {
+    const where = batch_id != null ? 'WHERE batch_id = ?' : '';
+    const args = batch_id != null ? [batch_id, limit] : [limit];
+    return getDb()
+      .prepare(
+        `SELECT id, batch_id, created_at, path, frames, fps, duration_seconds,
+                size_bytes, resolution, status, error
+         FROM cv_timelapses ${where}
+         ORDER BY created_at DESC LIMIT ?`
+      )
+      .all(...args);
+  },
+
+  getTimelapse(id) {
+    return getDb()
+      .prepare(
+        `SELECT id, batch_id, created_at, path, frames, fps, duration_seconds,
+                size_bytes, resolution, status, error
+         FROM cv_timelapses WHERE id = ?`
+      )
+      .get(id) || null;
+  },
+
+  deleteTimelapse(id) {
+    return getDb().prepare('DELETE FROM cv_timelapses WHERE id = ?').run(id);
   },
 
   // Map of snapshot_id → observation shape for the timeline view.

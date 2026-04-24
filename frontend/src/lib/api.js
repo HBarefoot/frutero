@@ -181,6 +181,18 @@ export async function fetchCVObservations(params = {}) {
 export async function analyzeSnapshot(snapshotId, { force = false } = {}) {
   return (await api.post(`/cv/analyze/${snapshotId}`, { force })).data;
 }
+export async function fetchTimelapses({ batch_id } = {}) {
+  return (await api.get('/cv/timelapses', { params: { batch_id } })).data;
+}
+export async function generateTimelapse({ batch_id = null, fps = 10 } = {}) {
+  return (await api.post('/cv/timelapses', { batch_id, fps })).data;
+}
+export function timelapseVideoUrl(id) {
+  return `/api/cv/timelapses/${id}/video`;
+}
+export async function deleteTimelapse(id) {
+  return (await api.delete(`/cv/timelapses/${id}`)).data;
+}
 
 export async function fetchStatus() {
   return (await api.get('/status')).data;

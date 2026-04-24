@@ -22,6 +22,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { SnapshotTimeline, CVConfigCard } from '@/components/camera/snapshot-timeline';
+import { TimelapseCard } from '@/components/camera/timelapse-card';
 
 const RES_OPTIONS = ['320x240', '640x480', '800x600', '1280x720', '1920x1080'];
 
@@ -140,8 +141,9 @@ export default function CameraPage() {
         </div>
       </div>
 
-      <div className="mt-6">
+      <div className="mt-6 space-y-6">
         <SnapshotTimeline />
+        <TimelapseCard />
       </div>
     </>
   );

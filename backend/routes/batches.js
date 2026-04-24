@@ -222,6 +222,30 @@ router.post('/batches/:id/archive', (req, res) => {
     user_id: req.user?.id ?? null,
   });
   batches.invalidate();
+
+  // If this batch has snapshots, kick off a timelapse in the
+  // background. Best-effort; failure is logged but not surfaced.
+  try {
+    const stats = Q.getBatchStats(id);
+    if ((stats.snapshots || 0) >= 2) {
+      const timelapse = require('../cv/timelapse');
+      timelapse.enqueueGenerate({ batch_id: id, fps: 10 })
+        .then((r) => {
+          if (r.ok) {
+            Q.insertBatchEvent({
+              batch_id: id,
+              kind: 'timelapse',
+              detail: `Auto-generated timelapse · ${r.frames} frames · ${Math.round(r.duration_seconds)}s`,
+              user_id: null,
+            });
+          }
+        })
+        .catch((err) => console.error('[batches] archive timelapse failed:', err));
+    }
+  } catch (err) {
+    console.error('[batches] archive timelapse hook error:', err);
+  }
+
   auth.logAudit(req, 'batch.archive', `batch:${id}`);
   res.json({ batch: serialize(Q.getBatch(id)) });
 });
