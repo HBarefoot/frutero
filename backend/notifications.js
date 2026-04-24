@@ -251,6 +251,64 @@ async function sendWebhook({ title, body, severity, link }) {
   }
 }
 
+// --- Cloud (frutero-fleet) -------------------------------------------
+// Forwards urgent alerts to the cloud control plane that the operator
+// can read across every chamber in their fleet. Uses the device JWT
+// stored at enrollment time. Auto-derives a stable source_id when the
+// caller doesn't pass one so re-fires of the same condition (e.g. a
+// 30-min sensor-silence cycle) UPSERT in place rather than duplicating.
+async function sendCloud({ title, body, severity, link, source_id }) {
+  const s = Q.getAllSettings();
+  if (s.notify_cloud_enabled !== '1') {
+    return { ok: false, skipped: true, reason: 'disabled' };
+  }
+  const url = Q.getSecret('fleet_url');
+  const jwt = Q.getSecret('fleet_jwt');
+  if (!url || !jwt) {
+    return { ok: false, skipped: true, reason: 'not_enrolled' };
+  }
+
+  const cloudSeverity = severity === 'warn' ? 'warn' : 'info';
+  const stableSource = source_id || `${cloudSeverity}:${(title || '').slice(0, 96)}`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const r = await fetch(`${url.replace(/\/+$/, '')}/api/devices/alerts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${jwt}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        severity: cloudSeverity,
+        title: title || '(untitled)',
+        body: body || null,
+        link: link || null,
+        source_id: stableSource,
+      }),
+    });
+    if (r.status === 401) {
+      // Cloud revoked us — clear local state so the Security card
+      // prompts for re-enrollment.
+      Q.deleteSecret('fleet_jwt');
+      Q.deleteSecret('fleet_chamber_id');
+      Q.deleteSecret('fleet_name');
+      return { ok: false, reason: 'revoked_by_cloud' };
+    }
+    if (!r.ok) {
+      const b = await r.text().catch(() => '');
+      return { ok: false, reason: `http_${r.status}`, detail: b.slice(0, 200) };
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err.name === 'AbortError' ? 'timeout' : err.message };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // --- Orchestrator ----------------------------------------------------
 // msg: { title, body, severity, link?, force? }
 //   severity defaults to 'info'; sub-min-severity messages are dropped
@@ -279,12 +337,13 @@ async function notify(msg = {}) {
     } catch { /* no active batch or table missing on fresh install */ }
   }
 
-  const channels = new Set(msg.channels || ['telegram', 'email', 'webhook', 'push']);
+  const channels = new Set(msg.channels || ['telegram', 'email', 'webhook', 'push', 'cloud']);
   const tasks = [];
   if (channels.has('telegram')) tasks.push(sendTelegram(msg).then((r) => ({ channel: 'telegram', ...r })));
   if (channels.has('email')) tasks.push(sendEmail(msg).then((r) => ({ channel: 'email', ...r })));
   if (channels.has('webhook')) tasks.push(sendWebhook(msg).then((r) => ({ channel: 'webhook', ...r })));
   if (channels.has('push')) tasks.push(sendPush(msg).then((r) => ({ channel: 'push', ...r })));
+  if (channels.has('cloud')) tasks.push(sendCloud(msg).then((r) => ({ channel: 'cloud', ...r })));
 
   const results = await Promise.all(tasks);
   const errored = results.filter((r) => !r.ok && !r.skipped);
@@ -294,4 +353,4 @@ async function notify(msg = {}) {
   return { sent: results };
 }
 
-module.exports = { notify, sendTelegram, sendEmail, sendWebhook, sendRaw, sendPush };
+module.exports = { notify, sendTelegram, sendEmail, sendWebhook, sendRaw, sendPush, sendCloud };

@@ -38,6 +38,12 @@ function currentConfig() {
       enabled: s.notify_push_enabled === '1',
       subscriptions: Q.listPushSubscriptions().length,
     },
+    cloud: {
+      enabled: s.notify_cloud_enabled === '1',
+      enrolled: !!Q.getSecret('fleet_jwt'),
+      url: Q.getSecret('fleet_url') || null,
+      chamber_id: Q.getSecret('fleet_chamber_id') || null,
+    },
   };
 }
 
@@ -109,6 +115,11 @@ router.put('/notifications/config', auth.requireAdmin, (req, res) => {
     if (p.enabled !== undefined) Q.setSetting('notify_push_enabled', p.enabled ? '1' : '0');
   }
 
+  if (body.cloud) {
+    const c = body.cloud;
+    if (c.enabled !== undefined) Q.setSetting('notify_cloud_enabled', c.enabled ? '1' : '0');
+  }
+
   auth.logAudit(req, 'notifications.config_update', null, {
     fields: Object.keys(body),
   });
@@ -120,7 +131,7 @@ router.put('/notifications/config', auth.requireAdmin, (req, res) => {
 // Honors min_severity bypass via { force: true }.
 router.post('/notifications/test/:channel', auth.requireAdmin, async (req, res) => {
   const channel = req.params.channel;
-  if (!['telegram', 'email', 'webhook', 'push'].includes(channel)) {
+  if (!['telegram', 'email', 'webhook', 'push', 'cloud'].includes(channel)) {
     return res.status(400).json({ error: 'unknown_channel' });
   }
   const result = await notifications.notify({
