@@ -145,6 +145,17 @@ export async function deleteBatch(id) {
   return (await api.delete(`/batches/${id}`)).data;
 }
 
+// --- Notifications ---------------------------------------------------
+export async function fetchNotificationsConfig() {
+  return (await api.get('/notifications/config')).data;
+}
+export async function saveNotificationsConfig(patch) {
+  return (await api.put('/notifications/config', patch)).data;
+}
+export async function testNotification(channel) {
+  return (await api.post(`/notifications/test/${channel}`)).data;
+}
+
 export async function fetchStatus() {
   return (await api.get('/status')).data;
 }

@@ -165,6 +165,13 @@ router.patch('/batches/:id', (req, res) => {
   if (body.cull_reason !== undefined) {
     fields.cull_reason = body.cull_reason || null;
   }
+  if (body.notifications_muted !== undefined) {
+    fields.notifications_muted = body.notifications_muted ? 1 : 0;
+    events.push({
+      kind: 'notifications',
+      detail: body.notifications_muted ? 'Muted alert notifications for this batch.' : 'Unmuted alert notifications.',
+    });
+  }
 
   Q.updateBatch(id, fields);
   for (const ev of events) {

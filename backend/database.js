@@ -231,6 +231,8 @@ function init() {
   // Existing rows stay NULL (pre-batch era) and queries handle that.
   ensureColumn('device_log', 'batch_id', 'INTEGER REFERENCES batches(id) ON DELETE SET NULL');
   ensureColumn('ai_insights', 'batch_id', 'INTEGER REFERENCES batches(id) ON DELETE SET NULL');
+  // Phase 8 M2: per-batch notification muting. Defaults to 0 (not muted).
+  ensureColumn('batches', 'notifications_muted', 'INTEGER NOT NULL DEFAULT 0');
 
   seedIfEmpty();
   seedActuatorsIfEmpty();
@@ -775,7 +777,8 @@ const Q = {
     return getDb()
       .prepare(
         `SELECT id, name, species_key, phase, started_at, ended_at,
-                parent_batch_id, notes, yield_grams, cull_reason, created_by
+                parent_batch_id, notes, yield_grams, cull_reason, created_by,
+                notifications_muted
          FROM batches
          WHERE ended_at IS NULL
          ORDER BY started_at DESC
@@ -788,7 +791,8 @@ const Q = {
     return getDb()
       .prepare(
         `SELECT id, name, species_key, phase, started_at, ended_at,
-                parent_batch_id, notes, yield_grams, cull_reason, created_by
+                parent_batch_id, notes, yield_grams, cull_reason, created_by,
+                notifications_muted
          FROM batches WHERE id = ?`
       )
       .get(id) || null;
@@ -817,7 +821,7 @@ const Q = {
   },
 
   updateBatch(id, fields) {
-    const allowed = ['name', 'species_key', 'phase', 'notes', 'yield_grams', 'cull_reason', 'ended_at'];
+    const allowed = ['name', 'species_key', 'phase', 'notes', 'yield_grams', 'cull_reason', 'ended_at', 'notifications_muted'];
     const sets = [];
     const vals = [];
     for (const k of allowed) {

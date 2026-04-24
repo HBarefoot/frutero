@@ -1,5 +1,6 @@
 const { Q } = require('../database');
 const batches = require('../batches');
+const notifications = require('../notifications');
 const { SYSTEM_PROMPT, buildContext, userPrompt } = require('./prompt');
 const anthropic = require('./providers/anthropic');
 const ollama = require('./providers/ollama');
@@ -125,6 +126,17 @@ async function runOnce({ force = false } = {}) {
       latency_ms: latency,
       batch_id,
     });
+    // Push warn-severity insights through the notification fan-out.
+    // Info-severity stays inside the UI — enough noise on a 6h cadence.
+    if (ins.severity === 'warn') {
+      notifications
+        .notify({
+          title: `AI · ${ins.title}`,
+          body: ins.body,
+          severity: 'warn',
+        })
+        .catch((err) => console.error('[advisor] notify failed:', err));
+    }
   }
 
   return {

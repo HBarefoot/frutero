@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/layout/page-header';
+import { NotificationsCard } from '@/components/security/notifications-card';
 import { fetchSecurityPosture, fetchRecentClientErrors } from '@/lib/api';
 import { formatRelative, formatDateTime } from '@/lib/format';
 import { useAuth } from '@/lib/auth-context';
@@ -118,6 +119,7 @@ export default function SecurityPage() {
           <BackupCard backup={data.backup} />
           <LogsCard logs={data.logs} />
           <ThrottlesCard throttles={data.throttles} />
+          <NotificationsCard />
           <SessionsCard sessions={data.sessions} className="xl:col-span-2" />
           <ClientErrorsCard errors={errors} className="xl:col-span-2" />
         </div>

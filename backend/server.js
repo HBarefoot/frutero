@@ -37,6 +37,7 @@ const backupRoutes = require('./routes/backup');
 const aiRoutes = require('./routes/ai');
 const aiAdvisor = require('./ai/advisor');
 const batchesRoutes = require('./routes/batches');
+const notificationsRoutes = require('./routes/notifications');
 
 async function main() {
   db.init();
@@ -130,6 +131,7 @@ async function main() {
   app.use('/api', clientErrorsRoutes);
   app.use('/api', aiRoutes);
   app.use('/api', batchesRoutes);
+  app.use('/api', notificationsRoutes);
 
   const publicDir = path.isAbsolute(config.PUBLIC_DIR)
     ? config.PUBLIC_DIR

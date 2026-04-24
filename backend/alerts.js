@@ -1,6 +1,7 @@
 const config = require('./config');
 const ws = require('./ws');
 const { Q } = require('./database');
+const notifications = require('./notifications');
 
 const lastAlertAt = new Map(); // key: `${metric}:${side}` → timestamp ms
 
@@ -47,7 +48,13 @@ function fire(metric, side, value, threshold) {
     data: { metric, side, value, threshold, message, timestamp: new Date().toISOString() },
   });
 
-  sendTelegram(message);
+  notifications
+    .notify({
+      title: `${metric} ${side === 'low' ? 'below minimum' : 'above maximum'}`,
+      body: message,
+      severity: 'warn',
+    })
+    .catch((err) => console.error('[alerts] notify failed:', err));
 }
 
 // Fire-and-forget Telegram notification. Reads settings on each call so the
@@ -120,7 +127,13 @@ function fireSilence(silentSeconds) {
     },
   });
 
-  sendTelegram(message);
+  notifications
+    .notify({
+      title: 'Sensor silent',
+      body: message,
+      severity: 'warn',
+    })
+    .catch((err) => console.error('[alerts] notify silence failed:', err));
 }
 
 function recent(limit = 10) {
