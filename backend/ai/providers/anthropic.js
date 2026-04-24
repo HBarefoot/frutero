@@ -13,7 +13,7 @@ function getApiKey() {
   return Q.getSecret('ai_anthropic_api_key') || process.env.ANTHROPIC_API_KEY || '';
 }
 
-async function invoke({ systemPrompt, userText, model }) {
+async function invoke({ systemPrompt, userText, model, images }) {
   const apiKey = getApiKey();
   if (!apiKey) {
     throw new Error('ai_anthropic_api_key not set');
@@ -21,6 +21,24 @@ async function invoke({ systemPrompt, userText, model }) {
 
   const client = new Anthropic({ apiKey });
   const effective = model || DEFAULT_MODEL;
+
+  // Build the user turn. When images are attached, the content is a
+  // list of image + text blocks; plain text turns stay a string so the
+  // system-prompt cache still hits on text-only advisor runs.
+  let userContent = userText;
+  if (Array.isArray(images) && images.length > 0) {
+    userContent = [
+      ...images.map((img) => ({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: img.media_type || 'image/jpeg',
+          data: img.data,
+        },
+      })),
+      { type: 'text', text: userText },
+    ];
+  }
 
   const response = await client.messages.create({
     model: effective,
@@ -33,7 +51,7 @@ async function invoke({ systemPrompt, userText, model }) {
         cache_control: { type: 'ephemeral' },
       },
     ],
-    messages: [{ role: 'user', content: userText }],
+    messages: [{ role: 'user', content: userContent }],
   });
 
   // The first text block is the JSON payload. Adaptive thinking may

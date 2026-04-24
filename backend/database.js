@@ -242,6 +242,30 @@ function init() {
     CREATE INDEX IF NOT EXISTS idx_cv_snapshots_timestamp ON cv_snapshots(timestamp);
     CREATE INDEX IF NOT EXISTS idx_cv_snapshots_batch ON cv_snapshots(batch_id);
 
+    -- Phase 9 M2: structured vision analysis of cv_snapshots. Each
+    -- observation is the output of one LLM vision call. Snapshots may
+    -- have zero, one, or multiple observations (if re-analyzed).
+    CREATE TABLE IF NOT EXISTS cv_observations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      snapshot_id INTEGER NOT NULL REFERENCES cv_snapshots(id) ON DELETE CASCADE,
+      batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      provider TEXT NOT NULL,
+      model TEXT,
+      growth_stage TEXT,
+      contamination_risk TEXT,
+      findings TEXT,
+      recommendation TEXT,
+      raw_output TEXT,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      latency_ms INTEGER,
+      error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_cv_observations_snapshot ON cv_observations(snapshot_id);
+    CREATE INDEX IF NOT EXISTS idx_cv_observations_batch ON cv_observations(batch_id);
+    CREATE INDEX IF NOT EXISTS idx_cv_observations_timestamp ON cv_observations(timestamp);
+
     -- Generic actuator registry. Replaces hardcoded fan/light pin config.
     -- key is referenced by schedules.device and device_log.device.
     CREATE TABLE IF NOT EXISTS actuators (
@@ -1061,6 +1085,92 @@ const Q = {
     return getDb()
       .prepare(`SELECT COUNT(*) AS n FROM cv_snapshots WHERE timestamp >= datetime('now', ?)`)
       .get(`-${hours} hours`).n;
+  },
+
+  // --- CV observations ----------------------------------------------
+  insertObservation({ snapshot_id, batch_id, provider, model, growth_stage, contamination_risk, findings, recommendation, raw_output, input_tokens, output_tokens, latency_ms, error }) {
+    return getDb()
+      .prepare(
+        `INSERT INTO cv_observations
+           (snapshot_id, batch_id, provider, model, growth_stage, contamination_risk,
+            findings, recommendation, raw_output,
+            input_tokens, output_tokens, latency_ms, error)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        snapshot_id,
+        batch_id ?? null,
+        provider,
+        model || null,
+        growth_stage || null,
+        contamination_risk || null,
+        findings ? JSON.stringify(findings) : null,
+        recommendation || null,
+        raw_output ?? null,
+        input_tokens ?? null,
+        output_tokens ?? null,
+        latency_ms ?? null,
+        error || null,
+      );
+  },
+
+  listObservations({ batch_id, snapshot_id, limit = 100 } = {}) {
+    const base = `SELECT id, snapshot_id, batch_id, timestamp, provider, model,
+                         growth_stage, contamination_risk, findings, recommendation,
+                         input_tokens, output_tokens, latency_ms, error
+                  FROM cv_observations`;
+    const where = [];
+    const args = [];
+    if (batch_id != null) { where.push('batch_id = ?'); args.push(batch_id); }
+    if (snapshot_id != null) { where.push('snapshot_id = ?'); args.push(snapshot_id); }
+    const sql = `${base}${where.length ? ' WHERE ' + where.join(' AND ') : ''} ORDER BY timestamp DESC LIMIT ?`;
+    args.push(limit);
+    return getDb()
+      .prepare(sql)
+      .all(...args)
+      .map((r) => ({ ...r, findings: r.findings ? JSON.parse(r.findings) : [] }));
+  },
+
+  getLatestObservationFor(snapshot_id) {
+    const row = getDb()
+      .prepare(
+        `SELECT id, snapshot_id, batch_id, timestamp, provider, model,
+                growth_stage, contamination_risk, findings, recommendation, error
+         FROM cv_observations
+         WHERE snapshot_id = ?
+         ORDER BY timestamp DESC LIMIT 1`
+      )
+      .get(snapshot_id);
+    if (!row) return null;
+    return { ...row, findings: row.findings ? JSON.parse(row.findings) : [] };
+  },
+
+  // Map of snapshot_id → observation shape for the timeline view.
+  observationsBySnapshotIds(ids) {
+    if (!ids.length) return {};
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = getDb()
+      .prepare(
+        `SELECT o.snapshot_id, o.growth_stage, o.contamination_risk, o.findings, o.error
+         FROM cv_observations o
+         JOIN (
+           SELECT snapshot_id, MAX(timestamp) AS ts
+           FROM cv_observations
+           WHERE snapshot_id IN (${placeholders})
+           GROUP BY snapshot_id
+         ) latest ON latest.snapshot_id = o.snapshot_id AND latest.ts = o.timestamp`
+      )
+      .all(...ids);
+    const out = {};
+    for (const r of rows) {
+      out[r.snapshot_id] = {
+        growth_stage: r.growth_stage,
+        contamination_risk: r.contamination_risk,
+        findings: r.findings ? JSON.parse(r.findings) : [],
+        error: r.error,
+      };
+    }
+    return out;
   },
 
   // Device-log + insight stats scoped to a batch.

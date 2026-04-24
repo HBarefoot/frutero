@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   Aperture,
   CameraOff,
+  CheckCircle2,
   Clock,
+  Eye,
   Image as ImageIcon,
+  Lightbulb,
   Loader2,
   RefreshCw,
   Sparkles,
+  Wand2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -24,6 +29,7 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/lib/auth-context';
 import {
+  analyzeSnapshot,
   fetchCVConfig,
   fetchCVSnapshots,
   saveCVConfig,
@@ -115,20 +121,46 @@ export function SnapshotTimeline({ batchId } = {}) {
       </Card>
 
       {selected && (
-        <SnapshotLightbox snap={selected} onClose={() => setSelected(null)} />
+        <SnapshotLightbox
+          snap={selected}
+          onClose={() => setSelected(null)}
+          onChanged={load}
+        />
       )}
     </>
   );
 }
 
+const RISK_META = {
+  none:    { variant: 'success', label: 'clean'  },
+  low:     { variant: 'info',    label: 'low'    },
+  medium:  { variant: 'warning', label: 'medium' },
+  high:    { variant: 'danger',  label: 'high'   },
+  unknown: { variant: 'muted',   label: '?'      },
+};
+
+const STAGE_META = {
+  colonization: 'col',
+  pinning:      'pin',
+  fruiting:     'fruit',
+  harvestable:  'harvest',
+  empty:        'empty',
+  unknown:      '?',
+};
+
 function SnapshotTile({ snap, onClick }) {
+  const obs = snap.observation;
+  const riskBorder = obs?.contamination_risk === 'high' ? 'border-danger/50'
+    : obs?.contamination_risk === 'medium' ? 'border-warning/50'
+    : snap.error ? 'border-danger/40'
+    : 'border-border';
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        'group relative overflow-hidden rounded-md border border-border bg-background/40 text-left transition hover:ring-1 hover:ring-primary/40',
-        snap.error && 'border-danger/40'
+        'group relative overflow-hidden rounded-md border bg-background/40 text-left transition hover:ring-1 hover:ring-primary/40',
+        riskBorder
       )}
     >
       {snap.error ? (
@@ -143,6 +175,21 @@ function SnapshotTile({ snap, onClick }) {
           className="block aspect-video w-full object-cover"
         />
       )}
+      {obs && (
+        <div className="absolute left-1 top-1 flex gap-1">
+          {obs.contamination_risk && obs.contamination_risk !== 'unknown' && (
+            <Badge variant={RISK_META[obs.contamination_risk]?.variant || 'muted'} className="text-[9px] uppercase">
+              {obs.contamination_risk === 'high' && <AlertTriangle className="size-2.5" />}
+              {RISK_META[obs.contamination_risk]?.label}
+            </Badge>
+          )}
+          {obs.growth_stage && obs.growth_stage !== 'unknown' && (
+            <Badge variant="muted" className="text-[9px] uppercase">
+              {STAGE_META[obs.growth_stage] || obs.growth_stage}
+            </Badge>
+          )}
+        </div>
+      )}
       <div className="border-t border-border bg-card/80 px-1.5 py-1 text-[10px] text-muted-foreground">
         <div className="flex items-center justify-between">
           <span>{formatRelative(snap.timestamp)}</span>
@@ -153,7 +200,39 @@ function SnapshotTile({ snap, onClick }) {
   );
 }
 
-function SnapshotLightbox({ snap, onClose }) {
+function SnapshotLightbox({ snap, onClose, onChanged }) {
+  const toast = useToast();
+  const { can } = useAuth();
+  const [busy, setBusy] = useState(false);
+  const [obs, setObs] = useState(snap.observation || null);
+
+  async function runAnalyze(force = false) {
+    if (!can('mutate')) return;
+    setBusy(true);
+    try {
+      const r = await analyzeSnapshot(snap.id, { force });
+      if (r.ok) {
+        setObs(r.observation ? {
+          growth_stage: r.observation.growth_stage,
+          contamination_risk: r.observation.contamination_risk,
+          findings: r.observation.findings,
+          recommendation: r.observation.recommendation,
+        } : null);
+        if (r.skipped) toast.info('Already analyzed · showing last result');
+        else toast.success(`Analyzed via ${r.provider}`);
+        onChanged?.();
+      } else {
+        toast.error(r.reason + (r.detail ? ' — ' + r.detail : ''));
+      }
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const riskMeta = obs?.contamination_risk ? RISK_META[obs.contamination_risk] : null;
+
   return (
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-background/85 backdrop-blur-sm p-4"
@@ -166,11 +245,11 @@ function SnapshotLightbox({ snap, onClose }) {
           <img
             src={snapshotImageUrl(snap.id)}
             alt={`Snapshot at ${snap.timestamp}`}
-            className="block max-h-[80vh] w-full object-contain"
+            className="block max-h-[65vh] w-full object-contain"
           />
         </div>
-        <div className="mt-2 flex items-center justify-between rounded-md border border-border bg-card px-3 py-2 text-xs">
-          <div className="flex items-center gap-3">
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs">
+          <div className="flex flex-wrap items-center gap-3">
             <span className="flex items-center gap-1 text-muted-foreground">
               <Clock className="size-3" /> {formatDateTime(snap.timestamp)}
             </span>
@@ -180,8 +259,51 @@ function SnapshotLightbox({ snap, onClose }) {
             {snap.batch_id && <Badge variant="outline">batch #{snap.batch_id}</Badge>}
             <Badge variant="muted" className="uppercase">{snap.trigger}</Badge>
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
+          <div className="flex items-center gap-2">
+            {can('mutate') && !snap.path?.endsWith?.('.svg') && !snap.error && (
+              <Button variant="outline" size="sm" onClick={() => runAnalyze(!!obs)} disabled={busy}>
+                {busy ? <Loader2 className="animate-spin" /> : <Wand2 />}
+                {obs ? 'Re-analyze' : 'Analyze'}
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
+          </div>
         </div>
+
+        {obs && (
+          <div className="mt-2 rounded-md border border-border bg-card p-3 text-xs space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <Eye className="size-3.5" /> vision
+              </span>
+              {obs.growth_stage && obs.growth_stage !== 'unknown' && (
+                <Badge variant="outline" className="uppercase">stage · {obs.growth_stage}</Badge>
+              )}
+              {riskMeta && (
+                <Badge variant={riskMeta.variant} className="uppercase">
+                  {obs.contamination_risk === 'high' && <AlertTriangle className="size-3" />}
+                  {obs.contamination_risk === 'none' && <CheckCircle2 className="size-3" />}
+                  contamination · {riskMeta.label}
+                </Badge>
+              )}
+            </div>
+            {obs.findings?.length > 0 && (
+              <ul className="space-y-1 pl-3">
+                {obs.findings.map((f, i) => (
+                  <li key={i} className="before:mr-1.5 before:content-['•'] before:text-muted-foreground">
+                    {f}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {obs.recommendation && (
+              <div className="flex items-start gap-1.5 rounded-md border border-border bg-background/40 px-2.5 py-1.5">
+                <Lightbulb className="mt-0.5 size-3.5 shrink-0 text-warning" />
+                <span>{obs.recommendation}</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -279,6 +401,45 @@ export function CVConfigCard() {
           after the retention window. At {cfg.cadence_minutes}min cadence + {cfg.resolution || '1920x1080'}, budget
           ≈ <code className="font-mono">{Math.round((60 / cfg.cadence_minutes) * 24 * 0.11)}MB/day</code>.
         </p>
+
+        <div className="rounded-md border border-border bg-background/40 px-3 py-2 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium">Auto-analyze with AI</div>
+              <p className="text-[11px] text-muted-foreground">
+                Every Nth scheduled snapshot → uses the AI advisor's provider + model.
+                Manual captures always analyze if enabled. High contamination risk fires a warn notification.
+              </p>
+            </div>
+            <Switch
+              checked={cfg.auto_analyze}
+              onCheckedChange={(v) => savePatch({ auto_analyze: v })}
+              aria-label="Toggle auto-analyze"
+            />
+          </div>
+          {cfg.auto_analyze && (
+            <div>
+              <Label htmlFor="cv-nth">Analyze every Nth</Label>
+              <Input
+                id="cv-nth"
+                type="number"
+                min="1"
+                max="1000"
+                defaultValue={cfg.analyze_every_nth}
+                onBlur={(e) => {
+                  const n = parseInt(e.target.value, 10);
+                  if (n && n !== cfg.analyze_every_nth) savePatch({ analyze_every_nth: n });
+                }}
+                className="mt-1.5 max-w-[120px]"
+              />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                At {cfg.cadence_minutes}min captures × every Nth, you analyze every{' '}
+                <code className="font-mono">{cfg.cadence_minutes * cfg.analyze_every_nth}min</code>.
+                Use a Claude-vision or Ollama-vision model (llava, qwen2-vl, minicpm-v).
+              </p>
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

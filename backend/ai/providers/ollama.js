@@ -18,12 +18,20 @@ function getBaseUrl() {
 // kinder than blocking the advisor's scheduler indefinitely.
 const REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 
-async function invoke({ systemPrompt, userText, model }) {
+async function invoke({ systemPrompt, userText, model, images }) {
   const baseUrl = getBaseUrl();
   const effective = model || DEFAULT_MODEL;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  // Ollama's /api/chat accepts images per-message as a flat array of
+  // base64-encoded strings. Vision-capable models only (llava, qwen2-vl,
+  // minicpm-v, etc.); text-only models silently ignore.
+  const userMessage = { role: 'user', content: userText };
+  if (Array.isArray(images) && images.length > 0) {
+    userMessage.images = images.map((img) => img.data);
+  }
 
   let res;
   try {
@@ -45,7 +53,7 @@ async function invoke({ systemPrompt, userText, model }) {
         },
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: userText },
+          userMessage,
         ],
       }),
     });

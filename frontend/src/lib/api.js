@@ -175,6 +175,12 @@ export async function fetchCVConfig() {
 export async function saveCVConfig(patch) {
   return (await api.put('/cv/config', patch)).data;
 }
+export async function fetchCVObservations(params = {}) {
+  return (await api.get('/cv/observations', { params })).data;
+}
+export async function analyzeSnapshot(snapshotId, { force = false } = {}) {
+  return (await api.post(`/cv/analyze/${snapshotId}`, { force })).data;
+}
 
 export async function fetchStatus() {
   return (await api.get('/status')).data;

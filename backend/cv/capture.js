@@ -32,6 +32,8 @@ function settingsForCapture() {
     enabled: s.cv_snapshots_enabled === '1',
     cadence_minutes: parseInt(s.cv_snapshots_cadence_minutes, 10) || 10,
     retention_days: parseInt(s.cv_snapshots_retention_days, 10) || 30,
+    auto_analyze: s.cv_auto_analyze === '1',
+    analyze_every_nth: parseInt(s.cv_analyze_every_nth, 10) || 1,
     device: s.camera_device || '/dev/video0',
     resolution: s.camera_resolution || DEFAULT_RES,
     quality: parseInt(s.camera_quality, 10) || DEFAULT_QUALITY,
@@ -134,8 +136,9 @@ async function capture({ trigger = 'scheduled' } = {}) {
 
   const [w, h] = cfg.resolution.split('x').map((n) => parseInt(n, 10) || null);
 
+  let snapshotId = null;
   try {
-    Q.insertSnapshot({
+    const ins = Q.insertSnapshot({
       batch_id: batchId,
       path: filePath,
       size_bytes: out.size ?? null,
@@ -144,11 +147,26 @@ async function capture({ trigger = 'scheduled' } = {}) {
       trigger,
       error: out.ok ? null : (out.error || 'unknown'),
     });
+    snapshotId = Number(ins.lastInsertRowid);
   } catch (err) {
     console.error('[cv] db insert failed:', err);
   }
 
-  return { ok: out.ok, path: filePath, error: out.error, batch_id: batchId };
+  // Auto-analyze hook. Runs every Nth scheduled snapshot (1 = every
+  // one). Manual captures always analyze if auto_analyze is on, so the
+  // "Capture now" button feels immediate. Fire-and-forget so capture
+  // latency doesn't include the LLM round-trip.
+  if (out.ok && snapshotId && cfg.auto_analyze && !filePath.endsWith('.svg')) {
+    const nth = Math.max(1, cfg.analyze_every_nth);
+    const shouldAnalyze = trigger === 'manual' || snapshotId % nth === 0;
+    if (shouldAnalyze) {
+      const analyzer = require('./analyzer');
+      analyzer.enqueueAnalyze(snapshotId)
+        .catch((err) => console.error('[cv] auto-analyze failed:', err));
+    }
+  }
+
+  return { ok: out.ok, path: filePath, error: out.error, batch_id: batchId, snapshot_id: snapshotId };
 }
 
 // Prune snapshots older than retention_days: delete files then rows.
