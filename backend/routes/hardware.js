@@ -1,6 +1,7 @@
 const express = require('express');
 const auth = require('../auth');
 const hardware = require('../hardware');
+const { getHostStats } = require('../host');
 
 const router = express.Router();
 
@@ -33,6 +34,18 @@ router.get('/hardware/sensors', auth.requireAdmin, (_req, res) => {
 
 router.get('/hardware/video', auth.requireAdmin, (_req, res) => {
   res.json(hardware.scanVideo());
+});
+
+// Pi host health: SoC temp, load, memory, disk, throttle flags.
+// Useful for debugging thermal throttling, undervoltage, and SD-card
+// exhaustion. Cheap enough to hit every 5s from the Hardware page.
+router.get('/hardware/host', auth.requireAdmin, (_req, res) => {
+  try {
+    res.json(getHostStats());
+  } catch (err) {
+    console.error('[hardware] host stats error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

@@ -98,6 +98,10 @@ export async function fetchRecentClientErrors(limit = 20) {
   return (await api.get('/client-errors', { params: { limit } })).data;
 }
 
+export async function fetchHostStats() {
+  return (await api.get('/hardware/host')).data;
+}
+
 export async function fetchStatus() {
   return (await api.get('/status')).data;
 }

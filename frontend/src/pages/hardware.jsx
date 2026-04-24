@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   Cable,
   Camera,
   Cpu,
+  Gauge,
+  HardDrive,
+  MemoryStick,
   Pencil,
   Plus,
   Power,
@@ -31,6 +35,7 @@ import {
   deleteActuator,
   fetchActuators,
   fetchHardwareScan,
+  fetchHostStats,
   pulseActuator,
   updateActuator,
 } from '@/lib/api';
@@ -45,6 +50,7 @@ export default function HardwarePage() {
   const { refresh: refreshStatus } = useStatus();
   const [scan, setScan] = useState(null);
   const [actuators, setActuators] = useState([]);
+  const [host, setHost] = useState(null);
   const [scanBusy, setScanBusy] = useState(false);
   const [editing, setEditing] = useState(null); // null | 'new' | actuator key
   const isOwner = can('admin');
@@ -76,6 +82,21 @@ export default function HardwarePage() {
   }
 
   useEffect(() => { reload(); }, []);
+
+  // Poll the Pi host stats every 5s so thermal/load/disk numbers feel
+  // live without being too chatty (each poll shells out to
+  // vcgencmd/df/etc. — keep interval comfortable).
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      fetchHostStats()
+        .then((h) => { if (alive) setHost(h); })
+        .catch(() => { /* non-fatal — card hides when host is null */ });
+    };
+    load();
+    const t = setInterval(load, 5000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
 
   if (!isOwner) {
     return (
@@ -132,6 +153,7 @@ export default function HardwarePage() {
         </div>
 
         <div className="space-y-6">
+          <HostHealthCard host={host} />
           <I2CCard scan={scan} />
           <SensorsCard scan={scan} />
           <VideoCard scan={scan} />
@@ -654,6 +676,146 @@ function VideoCard({ scan }) {
       )}
     </Card>
   );
+}
+
+// --- Host health -----------------------------------------------------
+
+function HostHealthCard({ host }) {
+  if (!host) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitleGroup>
+            <div className="flex items-center gap-2">
+              <Gauge className="size-4 text-muted-foreground" />
+              <CardTitle>Pi health</CardTitle>
+            </div>
+            <CardDescription>Loading…</CardDescription>
+          </CardTitleGroup>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  const tempC = host.cpu?.temp_c;
+  const tempHot = tempC != null && tempC >= 75; // Pi starts throttling at 80C
+  const loadPct = host.cpu?.load_pct_1m ?? 0;
+  const memPct = host.memory?.used_pct ?? 0;
+  const disk = host.disk_root;
+  const diskPct = disk ? disk.used_bytes / disk.total_bytes : 0;
+  const flags = host.cpu?.throttled;
+  const flaggingNow = flags && (flags.undervoltage || flags.freq_capped || flags.throttled_now || flags.temp_limit_now);
+  const flaggingPast = flags && (flags.undervoltage_past || flags.freq_capped_past || flags.throttled_past || flags.temp_limit_past);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitleGroup>
+          <div className="flex items-center gap-2">
+            <Gauge className="size-4 text-muted-foreground" />
+            <CardTitle>Pi health</CardTitle>
+          </div>
+          <CardDescription>{host.pi_model || 'host'} · kernel {host.kernel}</CardDescription>
+        </CardTitleGroup>
+        {flaggingNow && (
+          <Badge variant="danger" className="uppercase">
+            <AlertTriangle className="size-3" /> throttling now
+          </Badge>
+        )}
+        {!flaggingNow && flaggingPast && (
+          <Badge variant="warning" className="uppercase">
+            past events
+          </Badge>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-3 pt-0">
+        <MeterRow
+          icon={Thermometer}
+          label="SoC temperature"
+          value={tempC != null ? `${tempC.toFixed(1)} °C` : '—'}
+          pct={tempC != null ? Math.min(1, Math.max(0, (tempC - 30) / 60)) : 0}
+          accent={tempHot ? 'warning' : 'default'}
+          hint={tempHot ? 'hot — throttling starts at 80°C' : null}
+        />
+        <MeterRow
+          icon={Cpu}
+          label={`CPU load · ${host.cpu?.count}× cores`}
+          value={host.cpu?.load_1m != null ? host.cpu.load_1m.toFixed(2) : '—'}
+          pct={loadPct}
+          accent={loadPct > 0.8 ? 'warning' : 'default'}
+          hint={`${(host.cpu?.load_1m ?? 0).toFixed(2)} / ${(host.cpu?.load_5m ?? 0).toFixed(2)} / ${(host.cpu?.load_15m ?? 0).toFixed(2)} (1m / 5m / 15m)`}
+        />
+        <MeterRow
+          icon={MemoryStick}
+          label="Memory"
+          value={`${fmtBytes(host.memory?.used_bytes)} / ${fmtBytes(host.memory?.total_bytes)}`}
+          pct={memPct}
+          accent={memPct > 0.9 ? 'warning' : 'default'}
+        />
+        {disk && (
+          <MeterRow
+            icon={HardDrive}
+            label="Disk (root)"
+            value={`${fmtBytes(disk.used_bytes)} / ${fmtBytes(disk.total_bytes)}`}
+            pct={diskPct}
+            accent={diskPct > 0.85 ? 'warning' : 'default'}
+            hint={`${fmtBytes(disk.avail_bytes)} free`}
+          />
+        )}
+        <div className="flex items-center justify-between pt-1 text-[11px] text-muted-foreground">
+          <span>Uptime {fmtUptime(host.uptime_seconds)}</span>
+          {flags?.raw && (
+            <span className="font-mono" title="vcgencmd get_throttled">
+              throttled={flags.raw}
+            </span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function MeterRow({ icon: Icon, label, value, pct, accent, hint }) {
+  const p = Math.max(0, Math.min(1, pct || 0));
+  return (
+    <div>
+      <div className="flex items-center justify-between text-xs">
+        <span className="flex items-center gap-1.5 text-muted-foreground">
+          <Icon className="size-3.5" />
+          {label}
+        </span>
+        <span className="font-mono tabular-nums text-foreground">{value}</span>
+      </div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+        <div
+          className={cn(
+            'h-full transition-all',
+            accent === 'warning' ? 'bg-warning' : 'bg-primary'
+          )}
+          style={{ width: `${p * 100}%` }}
+        />
+      </div>
+      {hint && <div className="mt-0.5 text-[10px] text-muted-foreground">{hint}</div>}
+    </div>
+  );
+}
+
+function fmtBytes(n) {
+  if (n == null) return '—';
+  if (n > 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`;
+  if (n > 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  if (n > 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
+}
+
+function fmtUptime(sec) {
+  if (sec == null) return '—';
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
 }
 
 // --- Helpers ---------------------------------------------------------
