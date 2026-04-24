@@ -1,3 +1,5 @@
+const fs = require('node:fs');
+const { execSync } = require('node:child_process');
 const express = require('express');
 const { UAParser } = require('ua-parser-js');
 const { Q } = require('../database');
@@ -7,6 +9,37 @@ const config = require('../config');
 const { loadTlsCredentials } = require('../tls');
 
 const router = express.Router();
+
+// Parses journald's "Archived and active journals take up X.YG in the..."
+// output into raw bytes. Returns null if journalctl isn't present or the
+// format surprises us — Security page will gracefully hide the card.
+function journalDiskUsage() {
+  try {
+    const out = execSync('journalctl --disk-usage', { encoding: 'utf8', timeout: 3000 });
+    const m = out.match(/(\d+(?:\.\d+)?)([KMGT]?)/);
+    if (!m) return null;
+    const n = parseFloat(m[1]);
+    const unit = m[2];
+    const mult = { '': 1, K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4 }[unit] || 1;
+    return Math.round(n * mult);
+  } catch {
+    return null;
+  }
+}
+
+// Parses a journald.conf drop-in for our SystemMaxUse/MaxRetentionSec
+// values. The installer writes a known location; any custom operator
+// value in that file is reflected here unchanged.
+function journalLimits() {
+  try {
+    const text = fs.readFileSync('/etc/systemd/journald.conf.d/frutero.conf', 'utf8');
+    const max = text.match(/^\s*SystemMaxUse\s*=\s*(\S+)/m);
+    const ret = text.match(/^\s*MaxRetentionSec\s*=\s*(\S+)/m);
+    return { max_size_raw: max?.[1] || null, retention_raw: ret?.[1] || null };
+  } catch {
+    return { max_size_raw: null, retention_raw: null };
+  }
+}
 
 // Owner-only security posture snapshot. Powers the /security page. No
 // secrets ever leave this endpoint — pepper, cert bodies, session tokens
@@ -69,6 +102,10 @@ router.get('/security', auth.requireAdmin, (_req, res) => {
     backup: {
       last_backup_at: Q.getSecret('last_backup_at'),
       last_backup_bytes: parseInt(Q.getSecret('last_backup_bytes') || '0', 10) || 0,
+    },
+    logs: {
+      disk_usage_bytes: journalDiskUsage(),
+      ...journalLimits(),
     },
   });
 });

@@ -147,6 +147,25 @@ else
   fail "Missing service file at $SERVICE_FILE"
 fi
 
+# 7b. Cap journald disk usage so months of uptime don't eat the SD card.
+#     Idempotent — only writes if missing. Values chosen to leave plenty of
+#     room for investigation while being boring and safe on 16–32GB cards.
+JOURNALD_DROPIN="/etc/systemd/journald.conf.d/frutero.conf"
+if [ ! -f "$JOURNALD_DROPIN" ]; then
+  log "Configuring journald rotation at $JOURNALD_DROPIN."
+  sudo mkdir -p /etc/systemd/journald.conf.d
+  sudo tee "$JOURNALD_DROPIN" >/dev/null <<'EOF'
+[Journal]
+SystemMaxUse=500M
+MaxRetentionSec=30day
+RateLimitIntervalSec=30s
+RateLimitBurst=1000
+EOF
+  sudo systemctl restart systemd-journald
+else
+  log "journald rotation config already in place."
+fi
+
 # 8. Enable I²C in the boot config so /api/hardware/i2c can detect sensors.
 #    Idempotent — only appends if the line isn't already present.
 if [ -n "$BOOT_CONFIG" ] && $IS_PI; then

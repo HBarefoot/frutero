@@ -5,6 +5,7 @@ import {
   Bug,
   CheckCircle2,
   Download,
+  FileText,
   HardDrive,
   KeyRound,
   Lock,
@@ -115,6 +116,7 @@ export default function SecurityPage() {
           <HeadersCard headers={data.headers} tlsActive={data.tls.active} />
           <TokensCard tokens={data.tokens_at_rest} />
           <BackupCard backup={data.backup} />
+          <LogsCard logs={data.logs} />
           <ThrottlesCard throttles={data.throttles} />
           <SessionsCard sessions={data.sessions} className="xl:col-span-2" />
           <ClientErrorsCard errors={errors} className="xl:col-span-2" />
@@ -446,6 +448,75 @@ function formatBytes(n) {
   if (n > 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   if (n > 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${n} B`;
+}
+
+// ---------- Logs ----------
+
+// Convert a journald SystemMaxUse value like "500M" into bytes. The
+// backend gives us the raw string so we can render it verbatim when
+// parsing isn't confident.
+function parseJournalSize(raw) {
+  if (!raw) return null;
+  const m = /^(\d+(?:\.\d+)?)([KMGT]?)$/i.exec(raw);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  const unit = m[2].toUpperCase();
+  const mult = { '': 1, K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4 }[unit] || 1;
+  return Math.round(n * mult);
+}
+
+function LogsCard({ logs }) {
+  const used = logs?.disk_usage_bytes;
+  const maxRaw = logs?.max_size_raw;
+  const retRaw = logs?.retention_raw;
+  const maxBytes = parseJournalSize(maxRaw);
+  const percent = used != null && maxBytes ? Math.min(100, (used / maxBytes) * 100) : null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitleGroup>
+          <div className="flex items-center gap-2">
+            <FileText className="size-4 text-muted-foreground" />
+            <CardTitle>Logs</CardTitle>
+          </div>
+          <CardDescription>
+            {used == null ? 'journald disk usage unavailable' : `${formatBytes(used)} on disk`}
+          </CardDescription>
+        </CardTitleGroup>
+      </CardHeader>
+      <CardContent>
+        {used != null && maxBytes && (
+          <div className="mb-3 space-y-1.5">
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+              <div
+                className={cn(
+                  'h-full transition-all',
+                  percent > 80 ? 'bg-warning' : 'bg-primary'
+                )}
+                style={{ width: `${percent}%` }}
+              />
+            </div>
+            <div className="flex justify-between text-[11px] text-muted-foreground tabular-nums">
+              <span>{formatBytes(used)}</span>
+              <span>{maxRaw} cap</span>
+            </div>
+          </div>
+        )}
+        <dl className="space-y-1 text-[11px]">
+          <Row label="Max size" value={<code className="font-mono">{maxRaw || 'system default'}</code>} />
+          <Row label="Retention" value={<code className="font-mono">{retRaw || 'system default'}</code>} />
+        </dl>
+        {!maxRaw && (
+          <p className="mt-3 text-[11px] text-muted-foreground">
+            No frutero drop-in detected at{' '}
+            <code className="font-mono text-foreground">/etc/systemd/journald.conf.d/frutero.conf</code>.
+            Run <code className="font-mono text-foreground">./install.sh</code> to apply 500M / 30d limits.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 // ---------- Client errors ----------
