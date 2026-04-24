@@ -1,4 +1,5 @@
 const express = require('express');
+const { UAParser } = require('ua-parser-js');
 const auth = require('../auth');
 const hardware = require('../hardware');
 const { Q, hmacToken } = require('../database');
@@ -290,10 +291,23 @@ router.get('/auth/me/sessions', auth.requireAuth, (req, res) => {
     expires_at: s.expires_at,
     last_seen_at: s.last_seen_at,
     ip: s.ip,
-    user_agent: s.user_agent,
+    user_agent_raw: s.user_agent,
+    user_agent: parseUaSummary(s.user_agent),
   }));
   res.json({ sessions: rows });
 });
+
+function parseUaSummary(raw) {
+  if (!raw) return 'unknown';
+  try {
+    const p = new UAParser(raw).getResult();
+    const browser = p.browser.name ? `${p.browser.name}${p.browser.version ? ' ' + p.browser.version.split('.')[0] : ''}` : null;
+    const os = p.os.name ? `${p.os.name}${p.os.version ? ' ' + p.os.version : ''}` : null;
+    return [browser, os].filter(Boolean).join(' on ') || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
 
 router.post('/auth/me/revoke-others', auth.requireAuth, (req, res) => {
   if (!req.sessionToken) return res.status(400).json({ error: 'no_current_session' });

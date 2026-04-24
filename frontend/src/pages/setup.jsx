@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { PasswordStrength } from '@/components/auth/password-strength';
 import { useAuth } from '@/lib/auth-context';
 import { fetchSetupHardwareScan } from '@/lib/api';
 
@@ -242,9 +243,7 @@ function AccountStep({ onBack, setupOwner }) {
             onChange={(e) => setForm({ ...form, password: e.target.value })}
             className="mt-1.5"
           />
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            Minimum 10 characters. Long passphrases are better than cryptic short ones.
-          </p>
+          <PasswordStrength password={form.password} className="mt-2" />
         </div>
         <div>
           <Label htmlFor="confirm">Confirm password</Label>

@@ -556,6 +556,34 @@ const Q = {
       .all(user_id);
   },
 
+  // All non-expired sessions across users, joined with user info.
+  // Used by the owner-only Security page.
+  listAllActiveSessions() {
+    return getDb()
+      .prepare(
+        `SELECT s.token, s.user_id, s.created_at, s.expires_at,
+                s.last_seen_at, s.ip, s.user_agent,
+                u.email AS user_email, u.name AS user_name, u.role AS user_role
+         FROM sessions s
+         LEFT JOIN users u ON u.id = s.user_id
+         WHERE s.expires_at > CURRENT_TIMESTAMP
+         ORDER BY s.last_seen_at DESC`
+      )
+      .all();
+  },
+
+  countLegacyPlaintextInvites() {
+    return getDb()
+      .prepare('SELECT COUNT(*) AS n FROM invites WHERE length(token) != 64 AND accepted_at IS NULL')
+      .get().n;
+  },
+
+  countLegacyPlaintextResets() {
+    return getDb()
+      .prepare('SELECT COUNT(*) AS n FROM password_resets WHERE length(token) != 64 AND used_at IS NULL')
+      .get().n;
+  },
+
   deleteSessionsForUserExcept(user_id, keepToken) {
     return getDb()
       .prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?')

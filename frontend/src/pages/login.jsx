@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
-import { AlertCircle, KeyRound, LogIn } from 'lucide-react';
+import { AlertCircle, KeyRound, LogIn, Timer } from 'lucide-react';
 import { AuthLayout } from '@/components/auth/auth-layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,18 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  // Live countdown driven by the 429 retry_after_seconds payload. When
+  // this ticks above 0, the form is disabled so the user isn't confused
+  // about why their submit is being ignored.
+  const [cooldownSec, setCooldownSec] = useState(0);
+
+  useEffect(() => {
+    if (cooldownSec <= 0) return;
+    const t = setInterval(() => {
+      setCooldownSec((s) => (s <= 1 ? 0 : s - 1));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [cooldownSec]);
 
   if (needsSetup) return <Navigate to="/setup" replace />;
   if (isAuthed) {
@@ -23,20 +35,26 @@ export default function LoginPage() {
 
   async function onSubmit(e) {
     e.preventDefault();
+    if (cooldownSec > 0) return;
     setBusy(true);
     setError(null);
     try {
       await login({ email: email.trim(), password });
     } catch (err) {
-      const code = err?.response?.data?.error;
-      setError(
-        code === 'too_many_attempts'
-          ? 'Too many failed attempts. Try again in 15 minutes.'
-          : 'Invalid email or password.'
-      );
+      const data = err?.response?.data;
+      const code = data?.error;
+      if (code === 'too_many_attempts' && data?.retry_after_seconds) {
+        setCooldownSec(data.retry_after_seconds);
+        setError(null);
+      } else {
+        setError('Invalid email or password.');
+      }
       setBusy(false);
     }
   }
+
+  const mm = Math.floor(cooldownSec / 60);
+  const ss = String(cooldownSec % 60).padStart(2, '0');
 
   return (
     <AuthLayout
@@ -54,6 +72,7 @@ export default function LoginPage() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="mt-1.5"
+            disabled={cooldownSec > 0}
           />
         </div>
         <div>
@@ -66,17 +85,31 @@ export default function LoginPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className="mt-1.5"
+            disabled={cooldownSec > 0}
           />
         </div>
-        {error && (
+        {cooldownSec > 0 && (
+          <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+            <Timer className="size-3.5 shrink-0 mt-0.5" />
+            <div>
+              Too many failed attempts. Try again in{' '}
+              <span className="font-mono tabular-nums">{mm}:{ss}</span>.
+            </div>
+          </div>
+        )}
+        {error && cooldownSec === 0 && (
           <p className="flex items-start gap-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
             <AlertCircle className="size-3.5 shrink-0 mt-0.5" />
             {error}
           </p>
         )}
-        <Button type="submit" disabled={busy} className="w-full">
+        <Button type="submit" disabled={busy || cooldownSec > 0} className="w-full">
           <LogIn />
-          {busy ? 'Signing in…' : 'Sign in'}
+          {cooldownSec > 0
+            ? `Locked · ${mm}:${ss}`
+            : busy
+              ? 'Signing in…'
+              : 'Sign in'}
         </Button>
         <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
           <KeyRound className="size-3" />

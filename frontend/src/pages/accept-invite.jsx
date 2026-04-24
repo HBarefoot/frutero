@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { PasswordStrength } from '@/components/auth/password-strength';
 import { useAuth } from '@/lib/auth-context';
 import { inspectInvite } from '@/lib/api';
 
@@ -110,6 +111,7 @@ export default function AcceptInvitePage() {
             onChange={(e) => setForm({ ...form, password: e.target.value })}
             className="mt-1.5"
           />
+          <PasswordStrength password={form.password} className="mt-2" />
         </div>
         <div>
           <Label htmlFor="confirm">Confirm password</Label>

@@ -14,6 +14,7 @@ import HardwarePage from '@/pages/hardware';
 import AuditPage from '@/pages/audit';
 import AccountPage from '@/pages/account';
 import CameraPage from '@/pages/camera';
+import SecurityPage from '@/pages/security';
 import LoginPage from '@/pages/login';
 import SetupPage from '@/pages/setup';
 import AcceptInvitePage from '@/pages/accept-invite';
@@ -52,6 +53,7 @@ export default function App() {
             <Route path="/audit" element={<AuditPage />} />
             <Route path="/account" element={<AccountPage />} />
             <Route path="/camera" element={<CameraPage />} />
+            <Route path="/security" element={<SecurityPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

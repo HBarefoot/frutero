@@ -86,6 +86,10 @@ export async function fetchAuditLog(limit = 100) {
   return (await api.get('/audit', { params: { limit } })).data;
 }
 
+export async function fetchSecurityPosture() {
+  return (await api.get('/security')).data;
+}
+
 export async function fetchStatus() {
   return (await api.get('/status')).data;
 }

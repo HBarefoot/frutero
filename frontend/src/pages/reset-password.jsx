@@ -5,6 +5,7 @@ import { AuthLayout } from '@/components/auth/auth-layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { PasswordStrength } from '@/components/auth/password-strength';
 import { useAuth } from '@/lib/auth-context';
 import { inspectReset, submitReset } from '@/lib/api';
 
@@ -93,7 +94,7 @@ export default function ResetPasswordPage() {
             onChange={(e) => setForm({ ...form, password: e.target.value })}
             className="mt-1.5"
           />
-          <p className="mt-1 text-[11px] text-muted-foreground">Minimum 10 characters.</p>
+          <PasswordStrength password={form.password} className="mt-2" />
         </div>
         <div>
           <Label htmlFor="rp-confirm">Confirm password</Label>

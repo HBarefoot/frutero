@@ -9,6 +9,7 @@ import {
   Gauge,
   HardDrive,
   Leaf,
+  Shield,
   Sprout,
   Users,
   X,
@@ -73,6 +74,7 @@ export function Sidebar({ open, onClose }) {
             <NavSection label="Admin">
               <NavItem to="/hardware" label="Hardware" icon={HardDrive} onNavigate={onClose} />
               <NavItem to="/team" label="Team" icon={Users} onNavigate={onClose} />
+              <NavItem to="/security" label="Security" icon={Shield} onNavigate={onClose} />
               <NavItem to="/audit" label="Audit log" icon={FileSearch} onNavigate={onClose} />
             </NavSection>
           )}

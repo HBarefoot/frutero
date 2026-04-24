@@ -30,6 +30,7 @@ const actuatorRoutes = require('./routes/actuators');
 const hardwareRoutes = require('./routes/hardware');
 const mistingRoutes = require('./routes/misting');
 const cameraRoutes = require('./routes/camera');
+const securityRoutes = require('./routes/security');
 
 async function main() {
   db.init();
@@ -106,6 +107,7 @@ async function main() {
   app.use('/api', mistingRoutes);
   app.use('/api', cameraRoutes);
   app.use('/api', usersRoutes);
+  app.use('/api', securityRoutes);
 
   const publicDir = path.isAbsolute(config.PUBLIC_DIR)
     ? config.PUBLIC_DIR
