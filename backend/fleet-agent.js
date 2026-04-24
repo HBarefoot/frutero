@@ -12,6 +12,8 @@
 // there; we detect this on the next heartbeat (401) and disconnect
 // locally so the operator can re-enroll.
 
+const fs = require('node:fs');
+const path = require('node:path');
 const db = require('./database');
 const sensor = require('./sensor');
 const gpio = require('./gpio');
@@ -207,6 +209,9 @@ async function dispatchOne(cmd) {
       await gpio.pulse(key, ms, null);
       return { status: 'completed', result: { key, ms } };
     }
+    if (cmd.kind === 'take_snapshot') {
+      return await takeAndUploadSnapshot();
+    }
     return { status: 'failed', error: `unknown kind: ${cmd.kind}` };
   } catch (err) {
     if (err?.code === 'SAFETY_BLOCKED') {
@@ -230,6 +235,88 @@ async function dispatchCommands(pending) {
     out.push({ id: cmd.id, ...r });
   }
   return out;
+}
+
+// Reads a freshly-captured CV snapshot from disk and POSTs it to the
+// cloud's /api/devices/snapshot endpoint. Lazy-required so the heartbeat
+// loop has no compile-time dep on the CV pipeline (cycles aside, this
+// keeps boot time tight when fleet isn't enrolled).
+async function takeAndUploadSnapshot() {
+  let cvCapture;
+  try {
+    cvCapture = require('./cv/capture');
+  } catch (err) {
+    return { status: 'failed', error: `cv module unavailable: ${err.message}` };
+  }
+
+  const captured = await cvCapture.capture({ trigger: 'fleet' });
+  if (!captured?.ok || !captured?.path) {
+    return { status: 'failed', error: captured?.error || 'capture_failed' };
+  }
+  // .svg = stub placeholder when the camera isn't plugged in. Don't
+  // ship those — the cloud's mime allowlist would reject and the
+  // operator would be misled into thinking the chamber has a camera.
+  if (captured.path.endsWith('.svg')) {
+    return { status: 'failed', error: 'no_camera (stub placeholder, not uploaded)' };
+  }
+
+  let buf;
+  try { buf = fs.readFileSync(captured.path); }
+  catch (err) { return { status: 'failed', error: `read_failed: ${err.message}` }; }
+
+  const mime = mimeForPath(captured.path);
+  const conn = getConnection();
+  const url = `${conn.url.replace(/\/+$/, '')}/api/devices/snapshot`;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 30 * 1000); // 30s — uploads can be slow on flaky LTE
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${conn.jwt}`,
+      },
+      body: JSON.stringify({
+        mime,
+        image_b64: buf.toString('base64'),
+        captured_at: nowSqliteUtc(),
+        source: 'cv',
+        source_id: captured.snapshot_id || null,
+      }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const detail = await safeJson(res);
+      return { status: 'failed', error: `upload_${res.status}: ${detail?.error || ''}` };
+    }
+    const body = await safeJson(res);
+    return {
+      status: 'completed',
+      result: {
+        cloud_snapshot_id: body?.snapshot_id || null,
+        local_snapshot_id: captured.snapshot_id || null,
+        size: buf.length,
+      },
+    };
+  } catch (err) {
+    return {
+      status: 'failed',
+      error: err.name === 'AbortError' ? 'upload_timeout' : (err.message || 'upload_error'),
+    };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function mimeForPath(p) {
+  const ext = path.extname(p).toLowerCase();
+  if (ext === '.png') return 'image/png';
+  if (ext === '.webp') return 'image/webp';
+  return 'image/jpeg';
+}
+
+function nowSqliteUtc() {
+  return new Date().toISOString().slice(0, 19).replace('T', ' ');
 }
 
 async function postCommandResults(conn, results) {
