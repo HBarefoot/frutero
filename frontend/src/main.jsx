@@ -11,3 +11,15 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <App />
   </React.StrictMode>
 );
+
+// Service worker registration. Skipped in dev because Vite HMR and the
+// SW's cache-first asset strategy fight each other. The ?v= pins the
+// SW to this build so the browser sees a new registration on each
+// release and fires `updatefound`.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register(`/sw.js?v=${__BUILD_ID__}`)
+      .catch((err) => console.warn('[sw] registration failed:', err));
+  });
+}

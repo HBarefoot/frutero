@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
+import { PwaUpdateBanner } from '@/components/pwa-update-banner';
 
 export function AppShell() {
   const [navOpen, setNavOpen] = useState(false);
@@ -19,6 +20,7 @@ export function AppShell() {
             </div>
           </main>
         </div>
+        <PwaUpdateBanner />
       </div>
     </TooltipProvider>
   );
