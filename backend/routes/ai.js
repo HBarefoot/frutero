@@ -122,19 +122,59 @@ router.patch('/ai/insights/:id', (req, res) => {
 
 // POST /ai/run — manual trigger. Owner-only; also runs even if
 // `ai_enabled=0` so you can sanity-test a newly-configured provider.
-router.post('/ai/run', auth.requireAdmin, async (req, res) => {
-  try {
-    const result = await advisor.runOnce({ force: true });
-    auth.logAudit(req, 'ai.manual_run', null, {
-      ok: !!result.ok,
-      provider: result.provider,
-      insights: result.insights_generated ?? 0,
+//
+// Fire-and-forget by design: local LLMs on a Pi routinely take 30–90 s
+// to complete, and Claude with adaptive thinking can be similar on big
+// prompts. Holding the HTTP connection open that long runs into axios
+// defaults, nginx 60s caps, and the backend's 10-min max. Instead we
+// kick off the run in the background and let the `/ai/insights` list
+// (polled every 30 s by the UI) surface new entries when they land.
+//
+// Serialization: a single in-flight run at a time. Clicking Generate
+// twice in quick succession returns { already_running: true } on the
+// second press rather than queuing a second call against the provider.
+let runInFlight = null;
+
+router.post('/ai/run', auth.requireAdmin, (req, res) => {
+  const cfg = advisor.getConfig();
+  if (runInFlight) {
+    return res.status(202).json({
+      started: false,
+      already_running: true,
+      provider: cfg.provider,
     });
-    res.json(result);
-  } catch (err) {
-    console.error('[ai] manual run error:', err);
-    res.status(500).json({ error: err.message || 'run_failed' });
   }
+
+  runInFlight = advisor.runOnce({ force: true })
+    .then((result) => {
+      const summary = {
+        ok: !!result.ok,
+        provider: result.provider,
+        model: result.model,
+        insights: result.insights_generated ?? 0,
+        error: result.error,
+        latency_ms: result.latency_ms,
+      };
+      console.log('[ai] manual run finished:', summary);
+      return summary;
+    })
+    .catch((err) => {
+      console.error('[ai] manual run failed:', err);
+      return { ok: false, error: err.message || 'run_failed' };
+    })
+    .finally(() => {
+      runInFlight = null;
+    });
+
+  auth.logAudit(req, 'ai.manual_run', null, { provider: cfg.provider });
+
+  // 202 Accepted — work is in progress, see /api/ai/insights for results.
+  res.status(202).json({
+    started: true,
+    provider: cfg.provider,
+    model: cfg.provider === 'ollama' ? cfg.ollama_model : cfg.anthropic_model,
+    hint: 'Run started. New insights will appear on the /ai page within a minute for Claude, or 1–3 minutes for Ollama on Pi-class hardware.',
+  });
 });
 
 module.exports = router;

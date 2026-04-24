@@ -50,6 +50,10 @@ export default function AIPage() {
   const [insights, setInsights] = useState(null);
   const [runBusy, setRunBusy] = useState(false);
   const [reloadBusy, setReloadBusy] = useState(false);
+  // When a run is in flight we poll aggressively (every 5s) for up to
+  // 3 minutes so the new insight appears shortly after the model
+  // finishes, without holding an open HTTP request for that long.
+  const [activeRun, setActiveRun] = useState(null); // { startedAt, provider, model, baselineCount }
 
   async function load() {
     try {
@@ -70,6 +74,34 @@ export default function AIPage() {
     return () => clearInterval(t);
   }, []);
 
+  // Fast-poll while a run is in flight. Clears itself when a new
+  // insight arrives (count > baseline) or after 3 minutes.
+  useEffect(() => {
+    if (!activeRun) return;
+    const fast = setInterval(async () => {
+      try {
+        const ins = await fetchAIInsights(50);
+        setInsights(ins);
+        const newCount = ins.count_24h ?? 0;
+        if (newCount > activeRun.baselineCount) {
+          toast.success(
+            `${newCount - activeRun.baselineCount} insight(s) generated via ${activeRun.provider}`
+          );
+          setActiveRun(null);
+          return;
+        }
+        if (Date.now() - activeRun.startedAt > 3 * 60 * 1000) {
+          // Ran long enough that we should stop burning polls. Likely
+          // either a silent failure or a very slow local model. Either
+          // way the 30s polling below will still pick it up.
+          toast.warn('Run is taking longer than 3 minutes — still running in the background');
+          setActiveRun(null);
+        }
+      } catch { /* keep trying */ }
+    }, 5000);
+    return () => clearInterval(fast);
+  }, [activeRun, toast]);
+
   async function refresh() {
     setReloadBusy(true);
     try { await load(); } finally { setReloadBusy(false); }
@@ -79,16 +111,22 @@ export default function AIPage() {
     setRunBusy(true);
     try {
       const result = await runAIAdvisor();
-      if (result.ok === false) {
-        toast.error(result.error || 'advisor run failed');
-      } else if (result.skipped) {
-        toast.warn('Advisor is disabled — enable it first, then click Generate');
-      } else if (result.insights_generated === 0) {
-        toast.info('No new insights — chamber looks clean');
+      if (result.already_running) {
+        toast.warn('A run is already in progress — results will appear shortly');
+      } else if (result.started) {
+        const baselineCount = insights?.count_24h ?? 0;
+        setActiveRun({
+          startedAt: Date.now(),
+          provider: result.provider,
+          model: result.model,
+          baselineCount,
+        });
+        toast.info(
+          `Analyzing chamber via ${result.provider}${result.model ? ' · ' + result.model : ''} — insights will appear here shortly`
+        );
       } else {
-        toast.success(`${result.insights_generated} insight(s) generated`);
+        toast.error(result.error || 'Run did not start');
       }
-      await load();
     } catch (err) {
       toast.error(err);
     } finally {
@@ -119,9 +157,17 @@ export default function AIPage() {
               Refresh
             </Button>
             {can('mutate') && (
-              <Button size="sm" onClick={generateNow} disabled={runBusy}>
-                {runBusy ? <Loader2 className="animate-spin" /> : <Sparkles />}
-                {runBusy ? 'Thinking…' : 'Generate now'}
+              <Button
+                size="sm"
+                onClick={generateNow}
+                disabled={runBusy || !!activeRun}
+              >
+                {runBusy || activeRun ? <Loader2 className="animate-spin" /> : <Sparkles />}
+                {activeRun
+                  ? `Running · ${activeRun.provider}`
+                  : runBusy
+                    ? 'Starting…'
+                    : 'Generate now'}
               </Button>
             )}
           </div>
