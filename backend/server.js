@@ -41,6 +41,8 @@ const notificationsRoutes = require('./routes/notifications');
 const cvRoutes = require('./routes/cv');
 const cvCapture = require('./cv/capture');
 const pushRoutes = require('./routes/push');
+const fleetRoutes = require('./routes/fleet');
+const fleetAgent = require('./fleet-agent');
 
 async function main() {
   db.init();
@@ -141,6 +143,7 @@ async function main() {
   app.use('/api', batchesRoutes);
   app.use('/api', notificationsRoutes);
   app.use('/api', cvRoutes);
+  app.use('/api', fleetRoutes);
 
   const publicDir = path.isAbsolute(config.PUBLIC_DIR)
     ? config.PUBLIC_DIR
@@ -202,6 +205,9 @@ async function main() {
   // CV snapshot capture runs every cv_snapshots_cadence_minutes when
   // cv_snapshots_enabled=1. Safe to start unconditionally.
   cvCapture.startScheduler();
+  // Fleet agent: outbound heartbeat to the cloud control plane. No-op
+  // when this Pi has not been enrolled (fleet_jwt missing in secrets).
+  fleetAgent.start();
 
   const primaryPort = tlsActive ? config.HTTPS_PORT : config.PORT;
   primaryServer.listen(primaryPort, () => {
@@ -222,6 +228,7 @@ async function main() {
     try {
       sensor.stop();
       scheduler.shutdown();
+      fleetAgent.stop();
       gpio.cleanup();
     } finally {
       if (redirectServer) {

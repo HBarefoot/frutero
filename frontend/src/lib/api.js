@@ -337,3 +337,17 @@ export async function saveSettings(payload) {
 export async function applySpecies(species) {
   return (await api.post('/settings/species', { species })).data;
 }
+
+// Fleet (cloud control plane) — owner-only.
+export async function fetchFleetStatus() {
+  return (await api.get('/fleet/status')).data;
+}
+export async function enrollFleet(payload) {
+  return (await api.post('/fleet/enroll', payload)).data;
+}
+export async function fleetHeartbeatNow() {
+  return (await api.post('/fleet/heartbeat-now')).data;
+}
+export async function disconnectFleet() {
+  return (await api.delete('/fleet/connection')).data;
+}
