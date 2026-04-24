@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
+  Bug,
   CheckCircle2,
   KeyRound,
   Lock,
@@ -22,7 +23,7 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/layout/page-header';
-import { fetchSecurityPosture } from '@/lib/api';
+import { fetchSecurityPosture, fetchRecentClientErrors } from '@/lib/api';
 import { formatRelative, formatDateTime } from '@/lib/format';
 import { useAuth } from '@/lib/auth-context';
 import { cn } from '@/lib/cn';
@@ -31,6 +32,7 @@ export default function SecurityPage() {
   const { can } = useAuth();
   const isOwner = can('admin');
   const [data, setData] = useState(null);
+  const [errors, setErrors] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -38,7 +40,12 @@ export default function SecurityPage() {
   async function load() {
     setBusy(true);
     try {
-      setData(await fetchSecurityPosture());
+      const [posture, ce] = await Promise.all([
+        fetchSecurityPosture(),
+        fetchRecentClientErrors(20).catch(() => ({ entries: [], count_24h: 0 })),
+      ]);
+      setData(posture);
+      setErrors(ce);
       setError(null);
     } catch (err) {
       setError(err?.response?.data?.error || err.message);
@@ -107,6 +114,7 @@ export default function SecurityPage() {
           <TokensCard tokens={data.tokens_at_rest} />
           <ThrottlesCard throttles={data.throttles} />
           <SessionsCard sessions={data.sessions} className="xl:col-span-2" />
+          <ClientErrorsCard errors={errors} className="xl:col-span-2" />
         </div>
       )}
     </>
@@ -350,6 +358,73 @@ function SessionsCard({ sessions, className }) {
                 <div className="shrink-0 text-[11px] text-muted-foreground">
                   expires {formatDateTime(s.expires_at)}
                 </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------- Client errors ----------
+
+function ClientErrorsCard({ errors, className }) {
+  const entries = errors?.entries || [];
+  const count24 = errors?.count_24h ?? 0;
+  return (
+    <Card className={className}>
+      <CardHeader>
+        <CardTitleGroup>
+          <div className="flex items-center gap-2">
+            <Bug className="size-4 text-muted-foreground" />
+            <CardTitle>Client render errors</CardTitle>
+          </div>
+          <CardDescription>
+            {count24} in last 24h · {entries.length} shown
+          </CardDescription>
+        </CardTitleGroup>
+        {count24 === 0 && (
+          <Badge variant="success" className="uppercase">
+            <CheckCircle2 className="size-3" />
+            clean
+          </Badge>
+        )}
+      </CardHeader>
+      <CardContent className="pt-0">
+        {entries.length === 0 ? (
+          <div className="py-6 text-center text-xs text-muted-foreground">
+            No frontend render errors reported.
+          </div>
+        ) : (
+          <ul className="divide-y divide-border">
+            {entries.map((e) => (
+              <li key={e.id} className="py-2 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className="text-[10px] uppercase">
+                    {e.scope || 'page'}
+                  </Badge>
+                  <span className="font-mono text-muted-foreground">{e.path || '—'}</span>
+                  <span className="font-mono text-[11px] text-muted-foreground">
+                    {formatRelative(e.timestamp)}
+                  </span>
+                  {(e.user_name || e.user_email) && (
+                    <span className="text-[11px] text-muted-foreground">
+                      · {e.user_name || e.user_email}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 break-words font-mono text-danger">{e.message}</div>
+                {e.stack && (
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground">
+                      Stack trace
+                    </summary>
+                    <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background/40 p-2 font-mono text-[10px] text-muted-foreground">
+                      {e.stack}
+                    </pre>
+                  </details>
+                )}
               </li>
             ))}
           </ul>

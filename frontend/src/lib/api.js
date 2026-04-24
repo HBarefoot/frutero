@@ -90,6 +90,14 @@ export async function fetchSecurityPosture() {
   return (await api.get('/security')).data;
 }
 
+export async function reportClientError(payload) {
+  return (await api.post('/client-errors', payload)).data;
+}
+
+export async function fetchRecentClientErrors(limit = 20) {
+  return (await api.get('/client-errors', { params: { limit } })).data;
+}
+
 export async function fetchStatus() {
   return (await api.get('/status')).data;
 }

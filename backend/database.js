@@ -132,6 +132,22 @@ function init() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Client-side render errors reported by the React ErrorBoundary.
+    -- Read on the Security page so owners can spot regressions without
+    -- having to ask the user to open devtools.
+    CREATE TABLE IF NOT EXISTS client_errors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      path TEXT,
+      message TEXT NOT NULL,
+      stack TEXT,
+      scope TEXT,
+      user_agent TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_client_errors_timestamp ON client_errors(timestamp);
+
     -- Generic actuator registry. Replaces hardcoded fan/light pin config.
     -- key is referenced by schedules.device and device_log.device.
     CREATE TABLE IF NOT EXISTS actuators (
@@ -582,6 +598,37 @@ const Q = {
     return getDb()
       .prepare('SELECT COUNT(*) AS n FROM password_resets WHERE length(token) != 64 AND used_at IS NULL')
       .get().n;
+  },
+
+  // Client-side error log (written by /api/client-errors, read by the
+  // owner Security page).
+  insertClientError({ user_id, path, message, stack, scope, user_agent }) {
+    return getDb()
+      .prepare(
+        `INSERT INTO client_errors (user_id, path, message, stack, scope, user_agent)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(user_id || null, path || null, message, stack || null, scope || null, user_agent || null);
+  },
+
+  listClientErrors(limit) {
+    return getDb()
+      .prepare(
+        `SELECT ce.id, ce.timestamp, ce.user_id, ce.path, ce.message,
+                ce.stack, ce.scope, ce.user_agent,
+                u.email AS user_email, u.name AS user_name
+         FROM client_errors ce
+         LEFT JOIN users u ON u.id = ce.user_id
+         ORDER BY ce.timestamp DESC
+         LIMIT ?`
+      )
+      .all(limit);
+  },
+
+  countRecentClientErrors(hours = 24) {
+    return getDb()
+      .prepare(`SELECT COUNT(*) AS n FROM client_errors WHERE timestamp >= datetime('now', ?)`)
+      .get(`-${hours} hours`).n;
   },
 
   deleteSessionsForUserExcept(user_id, keepToken) {

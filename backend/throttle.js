@@ -106,6 +106,13 @@ const inviteAcceptThrottle = makeThrottle({
   windowMs: 15 * 60 * 1000,
   name: 'invite_accept',
 });
+// Generous ceiling — ErrorBoundary can legitimately fire once per
+// render-loop, but a tight reload loop would blow up the DB otherwise.
+const errorReportThrottle = makeThrottle({
+  threshold: 10,
+  windowMs: 60 * 60 * 1000,
+  name: 'error_report',
+});
 
 // Express middleware factory. Call with a throttle instance + key extractor.
 function throttleMiddleware(throttle, { extract }) {
@@ -128,6 +135,7 @@ const throttles = {
   register: registerThrottle,
   reset: resetThrottle,
   invite_accept: inviteAcceptThrottle,
+  error_report: errorReportThrottle,
 };
 
 module.exports = {
@@ -137,5 +145,6 @@ module.exports = {
   registerThrottle,
   resetThrottle,
   inviteAcceptThrottle,
+  errorReportThrottle,
   throttles,
 };
