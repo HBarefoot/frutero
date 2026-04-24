@@ -110,6 +110,45 @@ async function sendEmail({ title, body, severity }) {
   }
 }
 
+// Transactional mail helper — lets routes send an invite/reset email
+// to a specific recipient without going through the alert-oriented
+// sendEmail() path (which uses the global notify_email_to). Shares the
+// same SMTP transport config as alert email so there's only one place
+// to set credentials.
+async function sendRaw({ to, subject, text, html }) {
+  const s = Q.getAllSettings();
+  if (s.notify_email_enabled !== '1') {
+    return { ok: false, skipped: true, reason: 'disabled' };
+  }
+  const host = s.notify_email_host;
+  const port = parseInt(s.notify_email_port, 10) || 587;
+  const secure = s.notify_email_secure === '1';
+  const user = s.notify_email_user || '';
+  const from = s.notify_email_from || user;
+  const pass = Q.getSecret('notify_email_password') || '';
+
+  if (!host || !from || !to) {
+    return { ok: false, skipped: true, reason: 'missing_config' };
+  }
+
+  const transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: user ? { user, pass } : undefined,
+    connectionTimeout: 10000,
+    greetingTimeout: 5000,
+    socketTimeout: 15000,
+  });
+
+  try {
+    const info = await transporter.sendMail({ from, to, subject, text, html });
+    return { ok: true, message_id: info.messageId };
+  } catch (err) {
+    return { ok: false, reason: err.code || err.name, detail: err.message };
+  }
+}
+
 function renderEmailHtml({ title, body, severity }) {
   const color = severity === 'warn' ? '#b45309' : '#0f766e';
   const esc = (s) => String(s || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -230,4 +269,4 @@ async function notify(msg = {}) {
   return { sent: results };
 }
 
-module.exports = { notify, sendTelegram, sendEmail, sendWebhook };
+module.exports = { notify, sendTelegram, sendEmail, sendWebhook, sendRaw };

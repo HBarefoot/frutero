@@ -192,11 +192,13 @@ function UserRow({ u, self, onReload, onIssueReset }) {
 
   async function issueReset() {
     try {
-      const { token, expires_at } = await issuePasswordReset(u.id);
+      const { token, expires_at, email_sent, email_error } = await issuePasswordReset(u.id);
       onIssueReset({
         email: u.email,
         url: `${window.location.origin}/reset/${token}`,
         expires_at,
+        email_sent,
+        email_error,
       });
     } catch (err) {
       const code = err?.response?.data?.error;
@@ -337,7 +339,7 @@ function InviteForm({ onCreated }) {
   const [role, setRole] = useState('operator');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
+  const [success, setSuccess] = useState(null); // { url, email, email_sent, email_error }
 
   async function submit(e) {
     e.preventDefault();
@@ -346,8 +348,12 @@ function InviteForm({ onCreated }) {
     setBusy(true);
     try {
       const inv = await createInvite({ email: email.trim(), role });
-      const url = `${window.location.origin}/invite/${inv.token}`;
-      setSuccess(url);
+      setSuccess({
+        url: `${window.location.origin}/invite/${inv.token}`,
+        email: inv.email,
+        email_sent: !!inv.email_sent,
+        email_error: inv.email_error || null,
+      });
       setEmail('');
       onCreated?.();
     } catch (err) {
@@ -373,7 +379,7 @@ function InviteForm({ onCreated }) {
             <CardTitle>Invite a teammate</CardTitle>
           </div>
           <CardDescription>
-            Generates a one-time URL. Copy and send it directly for now; email delivery is coming.
+            Sends the invite by email if SMTP is configured. Copy-link fallback is always shown.
           </CardDescription>
         </CardTitleGroup>
       </CardHeader>
@@ -410,14 +416,31 @@ function InviteForm({ onCreated }) {
           </Button>
         </form>
         {success && (
-          <div className="mt-4 rounded-md border border-success/30 bg-success/10 p-3 text-xs">
-            <div className="mb-1 font-medium text-success">Invite created — copy now</div>
-            <code className="block break-all font-mono text-[11px] text-foreground">
-              {success}
-            </code>
-            <p className="mt-2 text-muted-foreground">
-              Expires in 72 hours. This link is stored hashed — it will not be
-              shown again. If you lose it, revoke and reissue.
+          <div className="mt-4 space-y-2 text-xs">
+            {success.email_sent ? (
+              <div className="rounded-md border border-success/30 bg-success/10 p-3">
+                <div className="mb-1 font-medium text-success">Invite sent to {success.email}</div>
+                <p className="text-muted-foreground">
+                  The fallback link is also shown below in case they need it. Expires in 72 hours.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-md border border-warning/30 bg-warning/10 p-3">
+                <div className="mb-1 font-medium">Invite created — copy and send manually</div>
+                <p className="text-muted-foreground">
+                  {success.email_error === 'disabled' || success.email_error === 'missing_config'
+                    ? 'SMTP is not configured. Set it up on Security → Notifications to auto-email future invites.'
+                    : `Email send failed${success.email_error ? ` (${success.email_error})` : ''}. Copy the link below.`}
+                </p>
+              </div>
+            )}
+            <div className="rounded-md border border-border bg-background/40 p-3">
+              <code className="block break-all font-mono text-[11px] text-foreground">
+                {success.url}
+              </code>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              This link is stored hashed — it will not be shown again. If you lose it, revoke and reissue.
             </p>
           </div>
         )}
@@ -450,12 +473,24 @@ function ResetLinkModal({ link, onClose }) {
               <CardTitle>Password reset link</CardTitle>
             </div>
             <CardDescription>
-              Send this link to <span className="font-mono">{link.email}</span> out-of-band.
-              It is shown only once. Expires in 72 hours.
+              {link.email_sent
+                ? <>Email sent to <span className="font-mono">{link.email}</span>. Link is also shown below as a fallback — shown only once, expires in 72 hours.</>
+                : <>Send this link to <span className="font-mono">{link.email}</span> out-of-band. It is shown only once. Expires in 72 hours.</>}
             </CardDescription>
           </CardTitleGroup>
         </CardHeader>
         <CardContent className="space-y-3">
+          {link.email_sent ? (
+            <div className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-xs text-success">
+              Email delivered to {link.email}.
+            </div>
+          ) : (
+            <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs">
+              {link.email_error === 'disabled' || link.email_error === 'missing_config'
+                ? <>SMTP not configured — copy the link below. Set it up on Security → Notifications to auto-email future resets.</>
+                : <>Email delivery failed{link.email_error ? ` (${link.email_error})` : ''} — copy the link below as a fallback.</>}
+            </div>
+          )}
           <div className="rounded-md border border-border bg-background/40 p-3">
             <code className="block break-all font-mono text-[11px] text-foreground">{link.url}</code>
           </div>
