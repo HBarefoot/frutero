@@ -19,6 +19,23 @@ const sensor = require('./sensor');
 const gpio = require('./gpio');
 const host = require('./host');
 const batches = require('./batches');
+const config = require('./config');
+
+// Computes the URL the cloud should link to to reach this Pi's local UI.
+// Priority: settings.pi_local_url override → auto-derive from primary
+// IPv4 + the active server port (HTTPS_PORT when TLS, else PORT).
+// Returns null when no usable interface + no override (fine — cloud
+// will hide the "Open Pi" link).
+function computeLocalUrl() {
+  const override = (db.Q.getAllSettings().pi_local_url || '').trim();
+  if (override) return override;
+  const ip = host.getPrimaryIPv4();
+  if (!ip) return null;
+  const tlsActive = config.TLS_ENABLED && config.TLS_KEY_PATH && config.TLS_CERT_PATH;
+  const port = tlsActive ? config.HTTPS_PORT : config.PORT;
+  const scheme = tlsActive ? 'https' : 'http';
+  return `${scheme}://${ip}:${port}`;
+}
 
 const HEARTBEAT_INTERVAL_MS = 60 * 1000;
 const REQUEST_TIMEOUT_MS = 15 * 1000;
@@ -45,8 +62,9 @@ function isConnected() {
 
 function getStatus() {
   const c = getConnection();
-  const forwardRaw = db.Q.getAllSettings().fleet_snapshot_forward_every_n;
-  const forwardEveryN = Math.max(0, parseInt(forwardRaw, 10) || 0);
+  const settings = db.Q.getAllSettings();
+  const forwardEveryN = Math.max(0, parseInt(settings.fleet_snapshot_forward_every_n, 10) || 0);
+  const override = (settings.pi_local_url || '').trim() || null;
   return {
     connected: !!(c.url && c.jwt && c.chamber_id),
     url: c.url || null,
@@ -57,6 +75,20 @@ function getStatus() {
     last_error: lastError,
     interval_seconds: HEARTBEAT_INTERVAL_MS / 1000,
     snapshot_forward_every_n: forwardEveryN,
+    // M3: surface effective + override + auto-detected default so the
+    // Security Fleet card can show "Detected: X / Override: Y / Save".
+    local_url: {
+      effective: computeLocalUrl(),
+      override,
+      auto_detected: (() => {
+        const ip = host.getPrimaryIPv4();
+        if (!ip) return null;
+        const tlsActive = config.TLS_ENABLED && config.TLS_KEY_PATH && config.TLS_CERT_PATH;
+        const port = tlsActive ? config.HTTPS_PORT : config.PORT;
+        const scheme = tlsActive ? 'https' : 'http';
+        return `${scheme}://${ip}:${port}`;
+      })(),
+    },
   };
 }
 
@@ -137,6 +169,9 @@ function buildSnapshot() {
       disk_pct: diskPct,
       throttled: cpu.throttled || null,
       uptime_seconds: stats.uptime_seconds ?? null,
+      // M3: Pi self-reports its LAN URL so the cloud's chamber detail
+      // can offer an "Open Pi" link. Cloud validates http(s)://-only.
+      local_url: computeLocalUrl(),
     },
   };
 }

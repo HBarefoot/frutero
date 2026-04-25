@@ -27,6 +27,7 @@ import {
   fleetHeartbeatNow,
   disconnectFleet,
   resyncFleetBatches,
+  setFleetLocalUrl,
   setFleetSnapshotForwarding,
 } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
@@ -188,6 +189,12 @@ export function FleetCard() {
                 <Unplug className="mr-1 size-3.5" /> Disconnect
               </Button>
             </div>
+            <LocalUrlRow
+              status={status}
+              onSaved={(s) => setStatus(s)}
+              busy={busy}
+              setBusy={setBusy}
+            />
             <ForwardingRow
               status={status}
               onSaved={(s) => setStatus(s)}
@@ -257,6 +264,72 @@ function Row({ label, value, valueClass = '' }) {
     <div className="flex items-baseline justify-between gap-3">
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className={`truncate text-right font-mono text-xs ${valueClass}`}>{value}</span>
+    </div>
+  );
+}
+
+// Inline row: shows the auto-detected LAN URL the cloud will use to
+// link back to this Pi, with an editable override (mDNS/tailscale/dyndns
+// names). Empty input clears the override and reverts to auto-detect.
+function LocalUrlRow({ status, onSaved, busy, setBusy }) {
+  const toast = useToast();
+  const lu = status.local_url || {};
+  const [draft, setDraft] = useState(lu.override || '');
+
+  // Keep the input in sync when status polls update underneath.
+  useEffect(() => {
+    setDraft(lu.override || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lu.override]);
+
+  async function save(rawValue) {
+    setBusy(true);
+    try {
+      const val = (rawValue ?? draft).trim() || null;
+      const out = await setFleetLocalUrl(val);
+      onSaved(out.status);
+      toast.success(val ? `Override set to ${val}` : 'Override cleared, using auto-detect');
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const dirty = (draft || '') !== (lu.override || '');
+
+  return (
+    <div className="space-y-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <Label htmlFor="fleet-local-url" className="text-xs">
+          Cloud's "Open Pi" link
+        </Label>
+        <span className="font-mono text-[11px] text-muted-foreground">
+          {lu.effective || 'unavailable'}
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          id="fleet-local-url"
+          type="url"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={lu.auto_detected || 'https://<your-pi>:3443'}
+          className="flex-1 font-mono text-xs"
+        />
+        <Button onClick={() => save()} disabled={busy || !dirty} size="sm" variant="outline">
+          Save
+        </Button>
+        {lu.override && (
+          <Button onClick={() => save(null)} disabled={busy} size="sm" variant="ghost">
+            Reset
+          </Button>
+        )}
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Auto-detected from the primary IPv4. Override with a stable name
+        (mDNS / Tailscale / dyndns) if your Pi's address changes.
+      </p>
     </div>
   );
 }

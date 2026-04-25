@@ -80,6 +80,29 @@ router.post('/fleet/resync-batches', auth.requireAdmin, async (req, res) => {
   });
 });
 
+// PUT /api/fleet/local-url — owner overrides the auto-detected LAN URL.
+// Pass { url: 'https://...' } to set, { url: null } (or missing) to
+// clear and revert to auto-detect. Validated http(s)://-only with a
+// reasonable length cap.
+router.put('/fleet/local-url', auth.requireAdmin, (req, res) => {
+  const raw = req.body?.url;
+  if (raw === null || raw === undefined || raw === '') {
+    Q.setSetting('pi_local_url', '');
+    auth.logAudit(req, 'fleet.local_url.clear', null, null);
+    return res.json({ ok: true, status: fleet.getStatus() });
+  }
+  if (typeof raw !== 'string') {
+    return res.status(400).json({ error: 'invalid_url' });
+  }
+  const url = raw.trim();
+  if (url.length > 512 || !/^https?:\/\/[^\s]+$/i.test(url)) {
+    return res.status(400).json({ error: 'invalid_url', detail: 'must be http(s):// URL, max 512 chars' });
+  }
+  Q.setSetting('pi_local_url', url);
+  auth.logAudit(req, 'fleet.local_url.update', null, { url });
+  res.json({ ok: true, status: fleet.getStatus() });
+});
+
 // PUT /api/fleet/snapshot-forwarding — owner sets the "every Nth scheduled
 // CV capture" cadence for opportunistic snapshot forwarding (M6). N=0
 // disables. Reads are via the regular /fleet/status response.
