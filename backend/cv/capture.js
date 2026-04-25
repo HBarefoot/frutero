@@ -36,6 +36,7 @@ function settingsForCapture() {
     analyze_every_nth: parseInt(s.cv_analyze_every_nth, 10) || 1,
     stage_advance_enabled: s.cv_stage_advance_enabled !== '0',
     stage_advance_threshold: Math.max(2, Math.min(10, parseInt(s.cv_stage_advance_threshold, 10) || 3)),
+    fleet_forward_every_n: Math.max(0, parseInt(s.fleet_snapshot_forward_every_n, 10) || 0),
     device: s.camera_device || '/dev/video0',
     resolution: s.camera_resolution || DEFAULT_RES,
     quality: parseInt(s.camera_quality, 10) || DEFAULT_QUALITY,
@@ -168,6 +169,23 @@ async function capture({ trigger = 'scheduled' } = {}) {
     }
   }
 
+  // Fleet-forward hook (M6). Opportunistically upload every Nth scheduled
+  // capture so the cloud always has recent thumbnails without the
+  // operator having to click "Take snapshot". Only fires on scheduled
+  // triggers — cloud-requested ('fleet') captures upload via the
+  // take_snapshot command handler; manual captures stay local.
+  if (out.ok && snapshotId && !filePath.endsWith('.svg') && trigger === 'scheduled' && cfg.fleet_forward_every_n > 0) {
+    scheduledForwardCount += 1;
+    if (scheduledForwardCount % cfg.fleet_forward_every_n === 0) {
+      const fleetAgent = require('../fleet-agent');
+      fleetAgent.uploadSnapshotToCloud({ path: filePath, snapshotId, source: 'cv' })
+        .then((r) => {
+          if (!r.ok) console.warn('[cv] fleet forward skipped:', r.error);
+        })
+        .catch((err) => console.error('[cv] fleet forward crashed:', err));
+    }
+  }
+
   return { ok: out.ok, path: filePath, error: out.error, batch_id: batchId, snapshot_id: snapshotId };
 }
 
@@ -187,6 +205,12 @@ async function prune() {
 // Scheduler: re-reads cadence every minute so tuning is live.
 let tickHandle = null;
 let lastCaptureAt = 0;
+
+// Fleet-forward cursor (M6). Module-scoped so it resets on restart —
+// which is fine: the first scheduled capture after boot forwards
+// whenever counter % N === 0, and we don't need persistence for a
+// simple Nth-sample heuristic.
+let scheduledForwardCount = 0;
 function startScheduler() {
   if (tickHandle) clearInterval(tickHandle);
   tickHandle = setInterval(async () => {

@@ -45,6 +45,8 @@ function isConnected() {
 
 function getStatus() {
   const c = getConnection();
+  const forwardRaw = db.Q.getAllSettings().fleet_snapshot_forward_every_n;
+  const forwardEveryN = Math.max(0, parseInt(forwardRaw, 10) || 0);
   return {
     connected: !!(c.url && c.jwt && c.chamber_id),
     url: c.url || null,
@@ -54,6 +56,7 @@ function getStatus() {
     last_status: lastStatus,
     last_error: lastError,
     interval_seconds: HEARTBEAT_INTERVAL_MS / 1000,
+    snapshot_forward_every_n: forwardEveryN,
   };
 }
 
@@ -273,11 +276,37 @@ async function takeAndUploadSnapshot() {
     return { status: 'failed', error: 'no_camera (stub placeholder, not uploaded)' };
   }
 
-  let buf;
-  try { buf = fs.readFileSync(captured.path); }
-  catch (err) { return { status: 'failed', error: `read_failed: ${err.message}` }; }
+  const up = await uploadSnapshotToCloud({
+    path: captured.path,
+    snapshotId: captured.snapshot_id,
+    source: 'cv',
+  });
+  if (!up.ok) return { status: 'failed', error: up.error };
+  return {
+    status: 'completed',
+    result: {
+      cloud_snapshot_id: up.cloud_snapshot_id,
+      local_snapshot_id: up.local_snapshot_id,
+      size: up.size,
+    },
+  };
+}
 
-  const mime = mimeForPath(captured.path);
+// Pure upload helper: reads an image off disk and POSTs it to the cloud.
+// Extracted so the CV scheduler (M6) can opportunistically forward every
+// Nth scheduled capture without re-spawning ffmpeg. Returns
+// {ok, cloud_snapshot_id, local_snapshot_id, size} on success,
+// {ok:false, error} otherwise. No throws.
+async function uploadSnapshotToCloud({ path: imgPath, snapshotId = null, source = 'cv' } = {}) {
+  if (!isConnected()) return { ok: false, error: 'not_connected' };
+  if (!imgPath) return { ok: false, error: 'no_path' };
+  if (imgPath.endsWith('.svg')) return { ok: false, error: 'stub_placeholder' };
+
+  let buf;
+  try { buf = fs.readFileSync(imgPath); }
+  catch (err) { return { ok: false, error: `read_failed: ${err.message}` }; }
+
+  const mime = mimeForPath(imgPath);
   const conn = getConnection();
   const url = `${conn.url.replace(/\/+$/, '')}/api/devices/snapshot`;
   const ctrl = new AbortController();
@@ -293,27 +322,25 @@ async function takeAndUploadSnapshot() {
         mime,
         image_b64: buf.toString('base64'),
         captured_at: nowSqliteUtc(),
-        source: 'cv',
-        source_id: captured.snapshot_id || null,
+        source,
+        source_id: snapshotId || null,
       }),
       signal: ctrl.signal,
     });
     if (!res.ok) {
       const detail = await safeJson(res);
-      return { status: 'failed', error: `upload_${res.status}: ${detail?.error || ''}` };
+      return { ok: false, error: `upload_${res.status}: ${detail?.error || ''}` };
     }
     const body = await safeJson(res);
     return {
-      status: 'completed',
-      result: {
-        cloud_snapshot_id: body?.snapshot_id || null,
-        local_snapshot_id: captured.snapshot_id || null,
-        size: buf.length,
-      },
+      ok: true,
+      cloud_snapshot_id: body?.snapshot_id || null,
+      local_snapshot_id: snapshotId || null,
+      size: buf.length,
     };
   } catch (err) {
     return {
-      status: 'failed',
+      ok: false,
       error: err.name === 'AbortError' ? 'upload_timeout' : (err.message || 'upload_error'),
     };
   } finally {
@@ -472,6 +499,7 @@ module.exports = {
   sendOnce,
   getStatus,
   isConnected,
-  buildSnapshot,   // exported for diagnostics / tests
+  buildSnapshot,           // exported for diagnostics / tests
+  uploadSnapshotToCloud,   // exported so cv/capture can forward scheduled snapshots (M6)
   HEARTBEAT_INTERVAL_MS,
 };

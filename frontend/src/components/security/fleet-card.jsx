@@ -25,6 +25,7 @@ import {
   enrollFleet,
   fleetHeartbeatNow,
   disconnectFleet,
+  setFleetSnapshotForwarding,
 } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -167,6 +168,12 @@ export function FleetCard() {
                 <Unplug className="mr-1 size-3.5" /> Disconnect
               </Button>
             </div>
+            <ForwardingRow
+              status={status}
+              onSaved={(s) => setStatus(s)}
+              busy={busy}
+              setBusy={setBusy}
+            />
           </>
         ) : (
           <>
@@ -230,6 +237,72 @@ function Row({ label, value, valueClass = '' }) {
     <div className="flex items-baseline justify-between gap-3">
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className={`truncate text-right font-mono text-xs ${valueClass}`}>{value}</span>
+    </div>
+  );
+}
+
+// Inline row: configures the "every Nth scheduled CV capture" forwarding
+// cadence. 0 = off. Only visible when fleet is connected.
+function ForwardingRow({ status, onSaved, busy, setBusy }) {
+  const toast = useToast();
+  const current = status.snapshot_forward_every_n ?? 0;
+  const [draft, setDraft] = useState(String(current));
+
+  // Sync local draft when the polled status advances (e.g. another tab
+  // changed the setting). Don't clobber an in-progress edit.
+  useEffect(() => {
+    setDraft(String(current));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current]);
+
+  async function save() {
+    const n = parseInt(draft, 10);
+    if (!Number.isInteger(n) || n < 0) {
+      toast.error('Every-N must be a non-negative integer (0 disables).');
+      return;
+    }
+    setBusy(true);
+    try {
+      const out = await setFleetSnapshotForwarding(n);
+      onSaved(out.status);
+      toast.success(n === 0 ? 'Snapshot forwarding disabled' : `Forwarding every ${n}th scheduled snapshot`);
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const dirty = String(current) !== String(parseInt(draft, 10) || 0);
+
+  return (
+    <div className="space-y-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <Label htmlFor="fleet-forward-n" className="text-xs">
+          Auto-forward every Nth scheduled snapshot
+        </Label>
+        <span className="text-[11px] text-muted-foreground">
+          {current === 0 ? 'disabled' : `every ${current}`}
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          id="fleet-forward-n"
+          type="number"
+          min="0"
+          step="1"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          className="w-24 font-mono"
+        />
+        <Button onClick={save} disabled={busy || !dirty} size="sm" variant="outline">
+          Save
+        </Button>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        0 disables. At the default CV cadence (10 min), N=6 forwards one image per hour.
+        Cloud operators can still request an on-demand snapshot anytime.
+      </p>
     </div>
   );
 }
