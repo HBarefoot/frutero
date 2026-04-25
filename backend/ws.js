@@ -15,14 +15,21 @@ function attach(server) {
   function handleUpgrade(req, socket, head) {
     const sess = auth.resolveSessionFromHeader(req.headers.cookie);
     if (!sess) {
+      console.log('[ws] handleUpgrade: 401 (no/invalid session)');
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
     }
     req.user = sess.user;
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit('connection', ws, req);
-    });
+    try {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        console.log(`[ws] handleUpgrade: 101 → connection emitted for user ${sess.user.email}`);
+        wss.emit('connection', ws, req);
+      });
+    } catch (err) {
+      console.error('[ws] handleUpgrade: threw:', err.message);
+      try { socket.destroy(); } catch { /* ignore */ }
+    }
   }
   // Expose for server.js's upgrade router.
   attach.handleUpgrade = handleUpgrade;
@@ -31,6 +38,7 @@ function attach(server) {
     ws.user = req.user || null;
     clients.add(ws);
     ws.isAlive = true;
+    console.log(`[ws] connection added: user=${ws.user?.email || '?'} clients=${clients.size}`);
 
     ws.on('pong', () => {
       ws.isAlive = true;
@@ -47,12 +55,14 @@ function attach(server) {
       }
     });
 
-    ws.on('close', () => {
+    ws.on('close', (code, reason) => {
       clients.delete(ws);
+      console.log(`[ws] close: user=${ws.user?.email || '?'} code=${code} reason=${reason?.toString() || '(none)'} remaining=${clients.size}`);
     });
 
-    ws.on('error', () => {
+    ws.on('error', (err) => {
       clients.delete(ws);
+      console.log(`[ws] error: user=${ws.user?.email || '?'} ${err.message}`);
     });
   });
 
