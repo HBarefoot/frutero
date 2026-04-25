@@ -123,4 +123,34 @@ function parseUa(raw) {
   }
 }
 
+// GET /api/security/terminal — admin-only browser terminal status. Tells
+// the UI whether ttyd is reachable + reveals the password copy-paste-able
+// so the operator doesn't have to dig in /etc/. The password lives in
+// secrets.terminal_password (seeded by install.sh).
+router.get('/security/terminal', auth.requireAdmin, async (_req, res) => {
+  const password = Q.getSecret('terminal_password') || null;
+  // Quick reachability probe — connects to the loopback ttyd port.
+  // Failure means the systemd unit didn't start; the card surfaces it.
+  let reachable = false;
+  try {
+    const net = require('node:net');
+    await new Promise((resolve) => {
+      const sock = net.createConnection({ host: '127.0.0.1', port: 7681 });
+      sock.setTimeout(500);
+      sock.once('connect', () => { reachable = true; sock.end(); resolve(); });
+      sock.once('timeout', () => { sock.destroy(); resolve(); });
+      sock.once('error', () => resolve());
+    });
+  } catch { /* keep reachable=false */ }
+
+  res.json({
+    reachable,
+    has_password: !!password,
+    password,
+    username: 'frutero',
+    url_path: '/terminal/',
+    port: 7681,
+  });
+});
+
 module.exports = router;

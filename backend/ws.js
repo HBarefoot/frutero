@@ -5,16 +5,27 @@ let wss;
 const clients = new Set();
 
 function attach(server) {
-  wss = new WebSocketServer({
-    server,
-    path: '/ws',
-    verifyClient: (info, cb) => {
-      const sess = auth.resolveSessionFromHeader(info.req.headers.cookie);
-      if (!sess) return cb(false, 401, 'Unauthorized');
-      info.req.user = sess.user;
-      cb(true);
-    },
-  });
+  // noServer mode: server.js dispatches upgrade events to handleUpgrade
+  // for /ws, /terminal goes to the ttyd proxy. Path filtering used to
+  // happen inside WebSocketServer (path: '/ws') but that aborts every
+  // upgrade that doesn't match — including /terminal — so we route at
+  // the http.Server level now.
+  wss = new WebSocketServer({ noServer: true });
+
+  function handleUpgrade(req, socket, head) {
+    const sess = auth.resolveSessionFromHeader(req.headers.cookie);
+    if (!sess) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    req.user = sess.user;
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
+  }
+  // Expose for server.js's upgrade router.
+  attach.handleUpgrade = handleUpgrade;
 
   wss.on('connection', (ws, req) => {
     ws.user = req.user || null;
@@ -95,4 +106,4 @@ function broadcast(event) {
   }
 }
 
-module.exports = { attach, broadcast };
+module.exports = { attach, broadcast, handleUpgrade: (...a) => attach.handleUpgrade(...a) };

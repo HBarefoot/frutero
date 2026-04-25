@@ -42,6 +42,7 @@ const cvRoutes = require('./routes/cv');
 const cvCapture = require('./cv/capture');
 const pushRoutes = require('./routes/push');
 const fleetRoutes = require('./routes/fleet');
+const terminalRoute = require('./routes/terminal');
 const fleetAgent = require('./fleet-agent');
 
 async function main() {
@@ -145,6 +146,12 @@ async function main() {
   app.use('/api', cvRoutes);
   app.use('/api', fleetRoutes);
 
+  // Browser terminal proxy. Mounted at /terminal (NOT /api/terminal) so
+  // ttyd's --base-path /terminal lines up with what the browser
+  // requests. Express requireAdmin runs first; ttyd's HTML + WS only
+  // get reached after a valid admin session.
+  app.use(terminalRoute.router);
+
   const publicDir = path.isAbsolute(config.PUBLIC_DIR)
     ? config.PUBLIC_DIR
     : path.join(__dirname, config.PUBLIC_DIR);
@@ -180,6 +187,30 @@ async function main() {
     ? https.createServer(tlsCreds, app)
     : http.createServer(app);
   ws.attach(primaryServer);
+
+  // WebSocket upgrade router. ws.attach() runs in noServer mode now so
+  // we own the dispatch:
+  //   /ws          → Express ws module (status / live readings)
+  //   /terminal/*  → ttyd proxy after admin auth check
+  //   anything else → destroyed
+  primaryServer.on('upgrade', (req, socket, head) => {
+    const url = req.url || '';
+    if (url === '/ws' || url.startsWith('/ws?')) {
+      ws.handleUpgrade(req, socket, head);
+      return;
+    }
+    if (url.startsWith('/terminal')) {
+      const sess = auth.resolveSessionFromHeader(req.headers.cookie);
+      if (!sess?.user || !auth.PERMISSIONS.admin.includes(sess.user.role)) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      terminalRoute.proxy.upgrade(req, socket, head);
+      return;
+    }
+    socket.destroy();
+  });
 
   let redirectServer = null;
   if (tlsActive) {
