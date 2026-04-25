@@ -43,6 +43,13 @@ const proxy = createProxyMiddleware({
   target: 'http://127.0.0.1:7681',
   changeOrigin: true,
   ws: true,
+  // CRITICAL: pathFilter scopes the auto-attached upgrade listener to
+  // /terminal/*. Without this, ws:true wires a listener that forwards
+  // EVERY upgrade — including /ws — to ttyd. ttyd has its own /ws path
+  // for the terminal stream and happily accepts our app's /ws upgrade
+  // with a duplicate 101 response, which collides with our wss-lib
+  // response and causes browser-side WebSocket Protocol Error (1002).
+  pathFilter: ['/terminal', '/terminal/**'],
   // Express's router.use('/terminal', ...) strips the prefix from
   // req.url before this middleware sees it, but ttyd is started with
   // --base-path /terminal and expects the prefix to be present. Restore
