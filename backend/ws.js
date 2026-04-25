@@ -56,17 +56,32 @@ function attach(server) {
     });
   });
 
+  // How many consecutive missed pongs we tolerate before terminating.
+  // Default 2 = the client has up to ~60s to respond, instead of the
+  // 30s a single-tick check gave. Buys headroom for transient CPU
+  // stalls (e.g., the multi-handshake burst when a new tab opens
+  // /terminal/) without holding dead sockets indefinitely.
+  const MISSED_PONG_THRESHOLD = 2;
+
   const heartbeat = setInterval(() => {
     let alive = 0;
     let terminated = 0;
     for (const ws of clients) {
       if (ws.isAlive === false) {
-        ws.terminate();
-        clients.delete(ws);
-        terminated += 1;
+        ws.missedPongs = (ws.missedPongs || 0) + 1;
+        if (ws.missedPongs >= MISSED_PONG_THRESHOLD) {
+          ws.terminate();
+          clients.delete(ws);
+          terminated += 1;
+          continue;
+        }
+        // First miss — log once + skip the ping for this tick (sending
+        // another would race with the late pong). Wait one more tick.
+        console.log(`[ws] missed pong (#${ws.missedPongs}); will retry`);
         continue;
       }
       ws.isAlive = false;
+      ws.missedPongs = 0;
       try {
         ws.ping();
         alive += 1;
