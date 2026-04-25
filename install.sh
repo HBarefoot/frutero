@@ -173,10 +173,18 @@ if [ "$ROTATE_CERT" = "true" ] || [ ! -f "$TLS_KEY" ] || [ ! -f "$TLS_CERT" ]; t
     sudo mv "$TLS_KEY" "${TLS_KEY}.bak.$(date +%s)" 2>/dev/null || true
   fi
   TLS_SANS="$(build_sans)"
-  log "Generating self-signed TLS cert (10 year validity) at $TLS_DIR."
+  log "Generating self-signed TLS cert (10 year validity, ECDSA P-256) at $TLS_DIR."
   log "  SANs: $TLS_SANS"
   sudo mkdir -p "$TLS_DIR"
-  sudo openssl req -x509 -newkey rsa:4096 -nodes \
+  # ECDSA P-256 over RSA-4096: handshakes are ~50× faster on a Pi 4
+  # because the asymmetric crypto step dominates CPU on low-power
+  # hardware. RSA-4096 was contributing to a multi-second event-loop
+  # stall when a fresh tab on the Pi UI fired off parallel TLS handshakes
+  # for index.html + JS chunks + the WS upgrade — visible as the
+  # /ws connection dropping briefly when "Open terminal" was clicked.
+  sudo openssl req -x509 \
+    -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+    -nodes \
     -keyout "$TLS_KEY" -out "$TLS_CERT" \
     -days 3650 \
     -subj "/CN=${PI_HOSTNAME}.local" \
