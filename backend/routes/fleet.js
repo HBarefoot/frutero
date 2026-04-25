@@ -45,6 +45,41 @@ router.delete('/fleet/connection', auth.requireAdmin, (req, res) => {
   res.json({ ok: true, status: fleet.getStatus() });
 });
 
+// POST /api/fleet/resync-batches — one-shot backfill of every batch in
+// the Pi's local DB to the cloud's chamber_batches mirror. Useful for
+// chambers that ran batches before P14 M4 shipped (forward hook only
+// fires on new mutations, not historicals). Idempotent on the cloud
+// side (UPSERT keyed on chamber_id+pi_batch_id), so re-running is safe.
+router.post('/fleet/resync-batches', auth.requireAdmin, async (req, res) => {
+  if (!fleet.isConnected()) {
+    return res.status(409).json({ error: 'not_connected' });
+  }
+  const startedAt = Date.now();
+  // Bound at 1000 to avoid pathological loops; a typical hobby fleet has
+  // far fewer batches than this.
+  const rows = Q.listBatches({ include_archived: true, limit: 1000 });
+  let succeeded = 0;
+  let failed = 0;
+  for (const row of rows) {
+    // listBatches doesn't return notes; getBatch does — fetch the full
+    // record so the cloud mirror includes any notes the operator wrote.
+    const full = Q.getBatch(row.id);
+    if (!full) continue;
+    const r = await fleet.forwardBatchEvent(full);
+    if (r?.ok) succeeded += 1;
+    else failed += 1;
+  }
+  auth.logAudit(req, 'fleet.resync_batches', null, {
+    count: rows.length, succeeded, failed,
+  });
+  res.json({
+    count: rows.length,
+    succeeded,
+    failed,
+    duration_ms: Date.now() - startedAt,
+  });
+});
+
 // PUT /api/fleet/snapshot-forwarding — owner sets the "every Nth scheduled
 // CV capture" cadence for opportunistic snapshot forwarding (M6). N=0
 // disables. Reads are via the regular /fleet/status response.
