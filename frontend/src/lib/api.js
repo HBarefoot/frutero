@@ -357,3 +357,6 @@ export async function setFleetSnapshotForwarding(everyN) {
 export async function resyncFleetBatches() {
   return (await api.post('/fleet/resync-batches')).data;
 }
+export async function setFleetLocalUrl(url) {
+  return (await api.put('/fleet/local-url', { url })).data;
+}

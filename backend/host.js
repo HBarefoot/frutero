@@ -77,6 +77,22 @@ function kernelRelease() {
   return os.release();
 }
 
+// Pick the first non-loopback IPv4 the OS knows about. Used to build a
+// default local URL when the operator hasn't set one explicitly. Returns
+// null when no usable interface is found (e.g., headless build with
+// only loopback up — fine; the operator can override).
+function getPrimaryIPv4() {
+  try {
+    const ifaces = os.networkInterfaces();
+    for (const name of Object.keys(ifaces)) {
+      for (const iface of ifaces[name] || []) {
+        if (iface.family === 'IPv4' && !iface.internal) return iface.address;
+      }
+    }
+  } catch { /* fall through */ }
+  return null;
+}
+
 function getHostStats() {
   const total = os.totalmem();
   const free = os.freemem();
@@ -117,4 +133,4 @@ function getHostStats() {
   };
 }
 
-module.exports = { getHostStats };
+module.exports = { getHostStats, getPrimaryIPv4 };
