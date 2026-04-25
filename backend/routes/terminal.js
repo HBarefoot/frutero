@@ -49,7 +49,19 @@ const proxy = createProxyMiddleware({
   // for the terminal stream and happily accepts our app's /ws upgrade
   // with a duplicate 101 response, which collides with our wss-lib
   // response and causes browser-side WebSocket Protocol Error (1002).
-  pathFilter: ['/terminal', '/terminal/**'],
+  //
+  // Function form needed because:
+  //   - HTTP requests come through router.use('/terminal', ...) which
+  //     strips the prefix; req.url is '/' or '/foo' here, not
+  //     '/terminal/foo'. The full URL is on req.originalUrl.
+  //   - WS upgrades skip Express middleware entirely; req.url is the
+  //     unmodified upgrade URL ('/terminal/ws') and req.originalUrl
+  //     may be undefined.
+  // Checking BOTH covers both flows.
+  pathFilter: (_path, req) => {
+    const u = req.originalUrl || req.url || '';
+    return u.startsWith('/terminal');
+  },
   // Express's router.use('/terminal', ...) strips the prefix from
   // req.url before this middleware sees it, but ttyd is started with
   // --base-path /terminal and expects the prefix to be present. Restore
