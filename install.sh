@@ -81,6 +81,23 @@ RUN_AS_USER() {
   fi
 }
 
+# Pre-fix ownership for any directory that earlier install.sh runs
+# (pre-PR-#18) created as root. npm install cleanup-step EACCES fires
+# whenever node_modules has root-owned remnants — chown them up to
+# the service user once so subsequent installs are clean. Idempotent:
+# already-correct ownership is a no-op.
+if [ "$EUID" -eq 0 ] && [ "$SERVICE_USER" != "root" ]; then
+  for d in \
+    "$BACKEND_DIR/node_modules" \
+    "$FRONTEND_DIR/node_modules" \
+    "$FRONTEND_DIR/dist" \
+    "$BACKEND_DIR/public"; do
+    if [ -e "$d" ]; then
+      chown -R "$SERVICE_USER:$SERVICE_USER" "$d" 2>/dev/null || true
+    fi
+  done
+fi
+
 # 2. Backend deps.
 log "Installing backend dependencies (as $SERVICE_USER)."
 cd "$BACKEND_DIR"
