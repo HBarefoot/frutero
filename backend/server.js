@@ -258,6 +258,10 @@ async function main() {
     console.log(
       `[server] ${tlsActive ? 'HTTPS' : 'HTTP'} listening on :${primaryPort} (gpioMock=${gpio.isMock()})`
     );
+    // Diag: rule out a stealth listener (e.g. http-proxy-middleware
+    // attaching for ws: true) that would race with our manual upgrade
+    // dispatch. Should always be 1.
+    console.log(`[server] upgrade listeners: ${primaryServer.listenerCount('upgrade')}`);
   });
   if (redirectServer) {
     redirectServer.listen(config.PORT, () => {
