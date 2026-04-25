@@ -18,20 +18,63 @@ function attach(server) {
   // deflate desyncs. Our payloads are tiny (sensor readings, alerts;
   // a few hundred bytes per message), so compression overhead isn't
   // worth the interop fragility.
-  wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+  // verifyClient is the same pattern that worked pre-noServer-refactor.
+  // ws-lib auto-rejects with 401 when cb(false, ...) is called; we
+  // don't have to write the HTTP response manually. This keeps the
+  // upgrade state-machine identical to the attached-mode setup that
+  // browsers were happy with.
+  wss = new WebSocketServer({
+    noServer: true,
+    perMessageDeflate: false,
+    verifyClient: (info, cb) => {
+      const sess = auth.resolveSessionFromHeader(info.req.headers.cookie);
+      if (!sess) {
+        console.log('[ws] verifyClient: rejected (no/invalid session)');
+        return cb(false, 401, 'Unauthorized');
+      }
+      info.req.user = sess.user;
+      cb(true);
+    },
+  });
 
   function handleUpgrade(req, socket, head) {
-    const sess = auth.resolveSessionFromHeader(req.headers.cookie);
-    if (!sess) {
-      console.log('[ws] handleUpgrade: 401 (no/invalid session)');
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-      socket.destroy();
-      return;
-    }
-    req.user = sess.user;
+    // Diagnostic: log WS-relevant request headers so we know what the
+    // browser sent. Specifically: extensions + protocol + version.
+    const wsHeaders = {
+      ext: req.headers['sec-websocket-extensions'] || '(none)',
+      proto: req.headers['sec-websocket-protocol'] || '(none)',
+      ver: req.headers['sec-websocket-version'] || '(none)',
+      key_len: (req.headers['sec-websocket-key'] || '').length,
+      head_len: head?.length ?? 'undef',
+    };
+    console.log(`[ws] req: ext=${wsHeaders.ext} proto=${wsHeaders.proto} ver=${wsHeaders.ver} key_len=${wsHeaders.key_len} head_len=${wsHeaders.head_len}`);
+
+    // Diagnostic: capture exactly what ws-lib writes to the socket
+    // during the upgrade. If the 101 response or any frame after it
+    // is malformed, this surfaces the byte sequence.
+    const origWrite = socket.write.bind(socket);
+    let writes = 0;
+    socket.write = function patchedWrite(chunk, ...args) {
+      writes += 1;
+      try {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        // Show first 200 bytes as JSON-escaped string so newlines + binary
+        // are visible. Truncate to keep journalctl lines short.
+        const preview = buf.toString('utf8', 0, Math.min(buf.length, 200));
+        console.log(`[ws] socket.write #${writes} ${buf.length}B: ${JSON.stringify(preview)}`);
+      } catch { /* ignore preview errors */ }
+      return origWrite(chunk, ...args);
+    };
+    // Restore original write after a short delay so subsequent frames
+    // (which we DON'T want to log per-message) go through unwrapped.
+    setTimeout(() => {
+      try { socket.write = origWrite; } catch { /* ignore */ }
+    }, 1000);
+
     try {
       wss.handleUpgrade(req, socket, head, (ws) => {
-        console.log(`[ws] handleUpgrade: 101 → connection emitted for user ${sess.user.email}`);
+        const userEmail = req.user?.email || '?';
+        console.log(`[ws] handleUpgrade: 101 → connection emitted for user ${userEmail}`);
         wss.emit('connection', ws, req);
       });
     } catch (err) {
