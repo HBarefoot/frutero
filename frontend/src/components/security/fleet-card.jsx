@@ -268,15 +268,17 @@ function Row({ label, value, valueClass = '' }) {
   );
 }
 
-// Inline row: shows the auto-detected LAN URL the cloud will use to
-// link back to this Pi, with an editable override (mDNS/tailscale/dyndns
-// names). Empty input clears the override and reverts to auto-detect.
+// Inline row: shows every detected candidate URL (Cloudflare / Tailscale
+// / ngrok / LAN) as a clickable chip; one click sets that URL as the
+// active override. Free-text override stays as a fallback for anything
+// we couldn't auto-detect (dyndns, custom DNS, etc.). Reset clears the
+// override so auto-pick chooses the highest-priority candidate.
 function LocalUrlRow({ status, onSaved, busy, setBusy }) {
   const toast = useToast();
   const lu = status.local_url || {};
+  const candidates = Array.isArray(lu.candidates) ? lu.candidates : [];
   const [draft, setDraft] = useState(lu.override || '');
 
-  // Keep the input in sync when status polls update underneath.
   useEffect(() => {
     setDraft(lu.override || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -285,10 +287,14 @@ function LocalUrlRow({ status, onSaved, busy, setBusy }) {
   async function save(rawValue) {
     setBusy(true);
     try {
-      const val = (rawValue ?? draft).trim() || null;
+      const val = (rawValue == null ? draft : rawValue).trim() || null;
       const out = await setFleetLocalUrl(val);
       onSaved(out.status);
-      toast.success(val ? `Override set to ${val}` : 'Override cleared, using auto-detect');
+      toast.success(
+        val
+          ? `Cloud will link to ${val}`
+          : 'Override cleared — auto-pick re-enabled'
+      );
     } catch (err) {
       toast.error(err);
     } finally {
@@ -299,39 +305,80 @@ function LocalUrlRow({ status, onSaved, busy, setBusy }) {
   const dirty = (draft || '') !== (lu.override || '');
 
   return (
-    <div className="space-y-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+    <div className="space-y-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
       <div className="flex items-center justify-between gap-2">
-        <Label htmlFor="fleet-local-url" className="text-xs">
-          Cloud's "Open Pi" link
-        </Label>
+        <Label className="text-xs">Cloud's "Open Pi" link</Label>
         <span className="font-mono text-[11px] text-muted-foreground">
           {lu.effective || 'unavailable'}
         </span>
       </div>
-      <div className="flex items-center gap-2">
-        <Input
-          id="fleet-local-url"
-          type="url"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder={lu.auto_detected || 'https://<your-pi>:3443'}
-          className="flex-1 font-mono text-xs"
-        />
-        <Button onClick={() => save()} disabled={busy || !dirty} size="sm" variant="outline">
-          Save
-        </Button>
-        {lu.override && (
-          <Button onClick={() => save(null)} disabled={busy} size="sm" variant="ghost">
-            Reset
+
+      {candidates.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Detected
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {candidates.map((c) => {
+              const active = c.url === lu.effective;
+              return (
+                <button
+                  key={c.kind}
+                  type="button"
+                  onClick={() => save(c.url)}
+                  disabled={busy}
+                  title={c.url}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition disabled:opacity-60 ${
+                    active
+                      ? 'border-primary/60 bg-primary/15 text-primary'
+                      : 'border-border bg-background text-muted-foreground hover:border-foreground/40'
+                  }`}
+                >
+                  <span className="font-medium">{c.label}</span>
+                  <span className="font-mono text-[10px] opacity-80">{summarizeUrl(c.url)}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-1.5">
+        <Label htmlFor="fleet-local-url" className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          Custom override
+        </Label>
+        <div className="flex items-center gap-2">
+          <Input
+            id="fleet-local-url"
+            type="url"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="https://chamber-1.example.com"
+            className="flex-1 font-mono text-xs"
+          />
+          <Button onClick={() => save()} disabled={busy || !dirty} size="sm" variant="outline">
+            Save
           </Button>
-        )}
+          {lu.override && (
+            <Button onClick={() => save('')} disabled={busy} size="sm" variant="ghost">
+              Reset
+            </Button>
+          )}
+        </div>
       </div>
+
       <p className="text-[11px] text-muted-foreground">
-        Auto-detected from the primary IPv4. Override with a stable name
-        (mDNS / Tailscale / dyndns) if your Pi's address changes.
+        Priority when no override: Cloudflare → Tailscale → ngrok → LAN.
+        Cloudflare resolves publicly; Tailscale only for tailnet members;
+        ngrok URLs change on restart; LAN is same-network only.
       </p>
     </div>
   );
+}
+
+function summarizeUrl(url) {
+  try { return new URL(url).host; }
+  catch { return url.replace(/^https?:\/\//, '').slice(0, 40); }
 }
 
 // Inline row: configures the "every Nth scheduled CV capture" forwarding
