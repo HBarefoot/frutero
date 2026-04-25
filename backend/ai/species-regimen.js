@@ -1,6 +1,7 @@
 const anthropic = require('./providers/anthropic');
 const ollama = require('./providers/ollama');
 const { Q } = require('../database');
+const { extractJsonBlock } = require('./parse-json');
 
 // Asks the configured AI provider for an optimal grow-chamber regimen
 // for a given mushroom species. Returns strict JSON shaped to match
@@ -53,14 +54,7 @@ function providerFor(name) {
 }
 
 function parseRegimen(rawText) {
-  const trimmed = (rawText || '').trim();
-  let parsed;
-  try { parsed = JSON.parse(trimmed); }
-  catch {
-    const m = trimmed.match(/\{[\s\S]*\}/);
-    if (!m) throw new Error('model response was not JSON');
-    parsed = JSON.parse(m[0]);
-  }
+  const parsed = extractJsonBlock(rawText);
 
   const num = (v, lo, hi) => {
     const n = Number(v);

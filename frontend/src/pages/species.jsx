@@ -233,6 +233,10 @@ function SpeciesEditor({ species, onClose, onSaved, isAdmin }) {
   const [busy, setBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [err, setErr] = useState(null);
+  // Sticky for the editor session: once AI fills the numeric fields,
+  // the species is saved as 'ai-suggested' even if the operator tweaks
+  // a value afterward (refining an AI suggestion is still AI-sourced).
+  const [aiSuggested, setAiSuggested] = useState(false);
 
   function set(k, v) { setForm((f) => ({ ...f, [k]: v })); }
 
@@ -259,6 +263,7 @@ function SpeciesEditor({ species, onClose, onSaved, isAdmin }) {
         mister_pulse_seconds: r.mister_pulse_seconds ?? '',
         notes: r.notes || f.notes,
       }));
+      setAiSuggested(true);
     } catch (e) {
       setErr(e?.response?.data?.detail || e?.response?.data?.error || e.message);
     } finally {
@@ -272,10 +277,7 @@ function SpeciesEditor({ species, onClose, onSaved, isAdmin }) {
     try {
       const payload = normalizeForApi(form);
       if (isNew) {
-        // Mark AI-sourced when AI suggested ANY of the numeric fields
-        // (operator can still override/pick by clicking Save without
-        // suggest, in which case source stays 'custom').
-        await createSpecies({ ...payload, source: 'custom' });
+        await createSpecies({ ...payload, source: aiSuggested ? 'ai-suggested' : 'custom' });
       } else {
         await updateSpecies(species.key, payload);
       }

@@ -3,6 +3,7 @@ const { SPECIES_PRESETS } = require('../config');
 const anthropic = require('./providers/anthropic');
 const ollama = require('./providers/ollama');
 const advisor = require('./advisor');
+const { extractJsonBlock } = require('./parse-json');
 
 // Per-batch retrospective. Distinct from the live 6h advisor: this
 // runs once (on archive or operator request), loads the batch's full
@@ -141,15 +142,7 @@ function buildBatchContext(batchId) {
 }
 
 function parseSummary(rawText) {
-  const trimmed = (rawText || '').trim();
-  let parsed;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    const m = trimmed.match(/\{[\s\S]*\}/);
-    if (!m) throw new Error('model response was not JSON');
-    parsed = JSON.parse(m[0]);
-  }
+  const parsed = extractJsonBlock(rawText);
 
   const headline = typeof parsed.headline === 'string' ? parsed.headline.trim().slice(0, 120) : '';
   if (!headline) throw new Error('headline missing');

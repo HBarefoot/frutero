@@ -133,7 +133,13 @@ router.patch('/ai/insights/:id', (req, res) => {
 // Serialization: a single in-flight run at a time. Clicking Generate
 // twice in quick succession returns { already_running: true } on the
 // second press rather than queuing a second call against the provider.
+//
+// `lastRun` captures the outcome of the most recent run so the UI can
+// distinguish "still running" from "failed silently" (Ollama unreachable,
+// API key wrong, parse failure, etc.) — without it, a failed run looks
+// the same as a slow run that never produces insights.
 let runInFlight = null;
+let lastRun = null;
 
 router.post('/ai/run', auth.requireAdmin, (req, res) => {
   const cfg = advisor.getConfig();
@@ -145,22 +151,35 @@ router.post('/ai/run', auth.requireAdmin, (req, res) => {
     });
   }
 
+  const startedAt = Date.now();
   runInFlight = advisor.runOnce({ force: true })
     .then((result) => {
-      const summary = {
+      lastRun = {
         ok: !!result.ok,
-        provider: result.provider,
-        model: result.model,
+        provider: result.provider || cfg.provider,
+        model: result.model || null,
         insights: result.insights_generated ?? 0,
-        error: result.error,
-        latency_ms: result.latency_ms,
+        error: result.error || null,
+        latency_ms: result.latency_ms ?? null,
+        started_at: startedAt,
+        finished_at: Date.now(),
       };
-      console.log('[ai] manual run finished:', summary);
-      return summary;
+      console.log('[ai] manual run finished:', lastRun);
+      return lastRun;
     })
     .catch((err) => {
+      lastRun = {
+        ok: false,
+        provider: cfg.provider,
+        model: null,
+        insights: 0,
+        error: err.message || 'run_failed',
+        latency_ms: null,
+        started_at: startedAt,
+        finished_at: Date.now(),
+      };
       console.error('[ai] manual run failed:', err);
-      return { ok: false, error: err.message || 'run_failed' };
+      return lastRun;
     })
     .finally(() => {
       runInFlight = null;
@@ -169,12 +188,21 @@ router.post('/ai/run', auth.requireAdmin, (req, res) => {
   auth.logAudit(req, 'ai.manual_run', null, { provider: cfg.provider });
 
   // 202 Accepted — work is in progress, see /api/ai/insights for results.
+  // started_at lets the UI correlate this run with the eventual /ai/last-run row.
   res.status(202).json({
     started: true,
+    started_at: startedAt,
     provider: cfg.provider,
     model: cfg.provider === 'ollama' ? cfg.ollama_model : cfg.anthropic_model,
     hint: 'Run started. New insights will appear on the /ai page within a minute for Claude, or 1–3 minutes for Ollama on Pi-class hardware.',
   });
+});
+
+// GET /ai/last-run — outcome of the most recent manual run. Frontend
+// uses this to surface failures (ok=false, error=<reason>) that would
+// otherwise be invisible since failed runs produce zero new insights.
+router.get('/ai/last-run', auth.requireAdmin, (_req, res) => {
+  res.json({ last_run: lastRun, in_flight: !!runInFlight });
 });
 
 module.exports = router;
