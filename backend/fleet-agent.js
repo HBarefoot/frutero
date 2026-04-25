@@ -204,6 +204,34 @@ async function sendOnce() {
   }
 }
 
+// Settings the cloud is allowed to remote-tune via `set_setting`. Keep
+// this narrow — anything involving secrets, passwords, or admin state
+// must stay out. Matching is exact (no prefix globs) so there's zero
+// ambiguity when adding new keys.
+const REMOTE_SETTABLE_KEYS = new Set([
+  // Sensor + CV cadences
+  'sensor_read_interval',
+  'cv_snapshots_enabled',
+  'cv_snapshots_cadence_minutes',
+  'cv_snapshots_retention_days',
+  'cv_auto_analyze',
+  'cv_analyze_every_nth',
+  'cv_stage_advance_enabled',
+  'cv_stage_advance_threshold',
+  // Mister automation knobs
+  'mister_automation_enabled',
+  'mister_humidity_threshold',
+  'mister_pulse_seconds',
+  // Notification channel toggles (no secrets — those live in `secrets`)
+  'notify_cloud_enabled',
+  'notify_telegram_enabled',
+  'notify_email_enabled',
+  'notify_webhook_enabled',
+  'notify_push_enabled',
+  // Fleet knobs
+  'fleet_snapshot_forward_every_n',
+]);
+
 // Dispatch a single command against the local Pi. Each handler returns
 // {status:'completed'|'failed', result?, error?}. Throws are caught and
 // surfaced as 'failed' rather than crashing the heartbeat loop.
@@ -228,6 +256,55 @@ async function dispatchOne(cmd) {
     if (cmd.kind === 'take_snapshot') {
       return await takeAndUploadSnapshot();
     }
+
+    // M7 — admin ops. Cloud validates shape; the Pi enforces policy.
+    if (cmd.kind === 'set_setting') {
+      const { key, value } = cmd.args || {};
+      if (typeof key !== 'string' || !key.trim()) {
+        return { status: 'failed', error: 'invalid args: key' };
+      }
+      if (!REMOTE_SETTABLE_KEYS.has(key)) {
+        return { status: 'failed', error: 'key_not_allowed' };
+      }
+      if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+        return { status: 'failed', error: 'invalid args: value type' };
+      }
+      const stored = typeof value === 'boolean' ? (value ? '1' : '0') : String(value);
+      db.Q.setSetting(key, stored);
+      return { status: 'completed', result: { key, value: stored } };
+    }
+
+    if (cmd.kind === 'rename_chamber') {
+      const name = String(cmd.args?.name ?? '').trim();
+      if (name.length < 1 || name.length > 64) {
+        return { status: 'failed', error: 'invalid_name' };
+      }
+      db.Q.setSecret('fleet_name', name);
+      return { status: 'completed', result: { name } };
+    }
+
+    if (cmd.kind === 'restart_service') {
+      // Return completed BEFORE we trigger the systemd restart. The
+      // response goes into the caller's `results` array and gets flushed
+      // back to the cloud in the outer loop; we schedule the actual
+      // restart slightly later so that flush has a chance to complete
+      // before this process is killed. Worst case (network stall,
+      // systemd racing the POST) the cloud sees `sent` until the Pi
+      // heartbeats again after reboot — acceptable; systemd ≤10s.
+      const { spawn } = require('node:child_process');
+      setTimeout(() => {
+        try {
+          spawn('systemctl', ['restart', 'mushroom-automation.service'], {
+            detached: true,
+            stdio: 'ignore',
+          }).unref();
+        } catch (err) {
+          console.error('[fleet] restart_service spawn failed:', err);
+        }
+      }, 1500);
+      return { status: 'completed', result: { scheduled_in_ms: 1500 } };
+    }
+
     return { status: 'failed', error: `unknown kind: ${cmd.kind}` };
   } catch (err) {
     if (err?.code === 'SAFETY_BLOCKED') {
