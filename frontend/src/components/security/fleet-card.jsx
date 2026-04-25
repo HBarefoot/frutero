@@ -4,6 +4,7 @@ import {
   CloudOff,
   Loader2,
   Plug,
+  RefreshCw,
   Send,
   Unplug,
 } from 'lucide-react';
@@ -25,6 +26,7 @@ import {
   enrollFleet,
   fleetHeartbeatNow,
   disconnectFleet,
+  resyncFleetBatches,
   setFleetSnapshotForwarding,
 } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
@@ -77,6 +79,21 @@ export function FleetCard() {
       setStatus(out.status);
       if (out.ok) toast.success('Heartbeat delivered');
       else toast.error(`Heartbeat failed: ${out.status?.last_error || out.error || 'unknown'}`);
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resync() {
+    setBusy(true);
+    try {
+      const out = await resyncFleetBatches();
+      const detail = out.failed > 0
+        ? `Resynced ${out.succeeded}/${out.count} batches (${out.failed} failed)`
+        : `Resynced ${out.count} batches in ${out.duration_ms}ms`;
+      toast.success(detail);
     } catch (err) {
       toast.error(err);
     } finally {
@@ -163,6 +180,9 @@ export function FleetCard() {
               <Button onClick={ping} disabled={busy} size="sm" variant="outline">
                 {busy ? <Loader2 className="mr-1 size-3.5 animate-spin" /> : <Send className="mr-1 size-3.5" />}
                 Send heartbeat now
+              </Button>
+              <Button onClick={resync} disabled={busy} size="sm" variant="outline">
+                <RefreshCw className="mr-1 size-3.5" /> Resync batches
               </Button>
               <Button onClick={disconnect} disabled={busy} size="sm" variant="outline">
                 <Unplug className="mr-1 size-3.5" /> Disconnect

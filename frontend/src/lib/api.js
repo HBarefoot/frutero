@@ -354,3 +354,6 @@ export async function disconnectFleet() {
 export async function setFleetSnapshotForwarding(everyN) {
   return (await api.put('/fleet/snapshot-forwarding', { every_n: everyN })).data;
 }
+export async function resyncFleetBatches() {
+  return (await api.post('/fleet/resync-batches')).data;
+}
