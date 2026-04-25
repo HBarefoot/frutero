@@ -10,7 +10,15 @@ function attach(server) {
   // happen inside WebSocketServer (path: '/ws') but that aborts every
   // upgrade that doesn't match — including /terminal — so we route at
   // the http.Server level now.
-  wss = new WebSocketServer({ noServer: true });
+  //
+  // permessage-deflate disabled: when enabled, Chromium-based browsers
+  // hitting our WSS endpoint over a self-signed-cert origin sometimes
+  // close the freshly-established WS with code 1002 "WebSocket Protocol
+  // Error" — frame negotiation between browser deflate and Node ws's
+  // deflate desyncs. Our payloads are tiny (sensor readings, alerts;
+  // a few hundred bytes per message), so compression overhead isn't
+  // worth the interop fragility.
+  wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
   function handleUpgrade(req, socket, head) {
     const sess = auth.resolveSessionFromHeader(req.headers.cookie);
