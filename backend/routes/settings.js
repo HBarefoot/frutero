@@ -1,14 +1,30 @@
 const express = require('express');
 const { Q } = require('../database');
-const config = require('../config');
 const scheduler = require('../scheduler');
 
 const router = express.Router();
 
 router.get('/settings', (_req, res) => {
+  // species_presets used to come from config.SPECIES_PRESETS but is
+  // now DB-backed. Convert the species table rows into the same map
+  // shape the frontend expected so existing callers don't break.
+  const presets = {};
+  for (const s of Q.listSpecies()) {
+    presets[s.key] = {
+      name: s.name,
+      temp_min: s.temp_min,
+      temp_max: s.temp_max,
+      humid_min: s.humid_min,
+      humid_max: s.humid_max,
+      light_hours: s.light_hours,
+      fan_interval: s.fan_interval,
+      mister_threshold: s.mister_threshold,
+      mister_pulse_seconds: s.mister_pulse_seconds,
+    };
+  }
   res.json({
     settings: Q.getAllSettings(),
-    species_presets: config.SPECIES_PRESETS,
+    species_presets: presets,
   });
 });
 
@@ -24,7 +40,7 @@ router.put('/settings', (req, res) => {
 
 router.post('/settings/species', (req, res) => {
   const speciesKey = req.body && req.body.species;
-  const preset = config.SPECIES_PRESETS[speciesKey];
+  const preset = Q.getSpecies(speciesKey);
   if (!preset) return res.status(400).json({ error: 'unknown species' });
 
   Q.setSetting('species', speciesKey);
@@ -32,10 +48,10 @@ router.post('/settings/species', (req, res) => {
   Q.upsertAlertConfig('temperature', preset.temp_min, preset.temp_max, true);
   Q.upsertAlertConfig('humidity', preset.humid_min, preset.humid_max, true);
 
-  if (preset.mister_threshold !== undefined) {
+  if (preset.mister_threshold != null) {
     Q.setSetting('mister_humidity_threshold', String(preset.mister_threshold));
   }
-  if (preset.mister_pulse_seconds !== undefined) {
+  if (preset.mister_pulse_seconds != null) {
     Q.setSetting('mister_pulse_seconds', String(preset.mister_pulse_seconds));
   }
 

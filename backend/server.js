@@ -44,6 +44,7 @@ const cvCapture = require('./cv/capture');
 const pushRoutes = require('./routes/push');
 const fleetRoutes = require('./routes/fleet');
 const terminalRoute = require('./routes/terminal');
+const speciesRoutes = require('./routes/species');
 const fleetAgent = require('./fleet-agent');
 
 async function main() {
@@ -149,6 +150,7 @@ async function main() {
   app.use('/api', notificationsRoutes);
   app.use('/api', cvRoutes);
   app.use('/api', fleetRoutes);
+  app.use('/api', speciesRoutes);
 
   // Browser terminal proxy. Mounted at /terminal (NOT /api/terminal) so
   // ttyd's --base-path /terminal lines up with what the browser

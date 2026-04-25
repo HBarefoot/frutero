@@ -337,6 +337,21 @@ export async function saveSettings(payload) {
 export async function applySpecies(species) {
   return (await api.post('/settings/species', { species })).data;
 }
+export async function fetchSpecies() {
+  return (await api.get('/species')).data;
+}
+export async function createSpecies(payload) {
+  return (await api.post('/species', payload)).data;
+}
+export async function updateSpecies(key, fields) {
+  return (await api.patch(`/species/${encodeURIComponent(key)}`, fields)).data;
+}
+export async function deleteSpecies(key) {
+  return (await api.delete(`/species/${encodeURIComponent(key)}`)).data;
+}
+export async function suggestSpeciesRegimen(payload) {
+  return (await api.post('/species/suggest-regimen', payload)).data;
+}
 
 // Fleet (cloud control plane) — owner-only.
 export async function fetchFleetStatus() {
