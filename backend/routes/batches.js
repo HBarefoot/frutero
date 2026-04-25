@@ -2,6 +2,18 @@ const express = require('express');
 const { Q } = require('../database');
 const batches = require('../batches');
 const auth = require('../auth');
+const fleet = require('../fleet-agent');
+
+// Tiny helper to push a batch row to the cloud after a local mutation
+// without bloating each handler. Fire-and-forget; the local response
+// path doesn't care whether the forward succeeds.
+function forwardBatchToCloud(batchId) {
+  if (!batchId) return;
+  let row;
+  try { row = Q.getBatch(batchId); } catch { return; }
+  if (!row) return;
+  fleet.forwardBatchEvent(row).catch(() => { /* logged inside */ });
+}
 
 const router = express.Router();
 
@@ -85,6 +97,7 @@ router.post('/batches', (req, res) => {
       detail: `Auto-archived when batch '${name.trim()}' started.`,
       user_id: req.user?.id ?? null,
     });
+    forwardBatchToCloud(current.id);
   }
 
   const out = Q.insertBatch({
@@ -107,6 +120,7 @@ router.post('/batches', (req, res) => {
   batches.invalidate();
   auth.logAudit(req, 'batch.create', `batch:${id}`, { name: name.trim(), species_key, phase });
 
+  forwardBatchToCloud(id);
   res.status(201).json({ batch: serialize(Q.getBatch(id)) });
 });
 
@@ -186,6 +200,7 @@ router.patch('/batches/:id', (req, res) => {
   batches.invalidate();
   auth.logAudit(req, 'batch.update', `batch:${id}`, fields);
 
+  forwardBatchToCloud(id);
   res.json({ batch: serialize(Q.getBatch(id)) });
 });
 
@@ -262,6 +277,7 @@ router.post('/batches/:id/archive', (req, res) => {
   }
 
   auth.logAudit(req, 'batch.archive', `batch:${id}`);
+  forwardBatchToCloud(id);
   res.json({ batch: serialize(Q.getBatch(id)) });
 });
 

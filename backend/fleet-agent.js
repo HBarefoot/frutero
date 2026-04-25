@@ -568,6 +568,57 @@ async function safeJson(res) {
   try { return await res.json(); } catch { return null; }
 }
 
+// Forward a batch row to the cloud's /api/devices/batch-event endpoint
+// so the cloud's chamber_batches mirror stays in sync (P14 M4). Called
+// from the routes/batches.js mutation handlers; idempotent on the
+// cloud side (UPSERT keyed on chamber_id+pi_batch_id), so retries +
+// out-of-order forwards are safe.
+//
+// Fire-and-forget — the operator's local mutation succeeds even when
+// the cloud is unreachable. Logs a warning on failure but never throws.
+async function forwardBatchEvent(batch) {
+  if (!batch || typeof batch !== 'object' || !batch.id) return { skipped: 'no_batch' };
+  if (!isConnected()) return { skipped: 'not_connected' };
+
+  const conn = getConnection();
+  const url = `${conn.url.replace(/\/+$/, '')}/api/devices/batch-event`;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${conn.jwt}`,
+      },
+      body: JSON.stringify({
+        kind: 'batch.snapshot',
+        batch: {
+          pi_id: batch.id,
+          name: batch.name ?? null,
+          species_key: batch.species_key ?? null,
+          phase: batch.phase ?? null,
+          started_at: batch.started_at ?? null,
+          ended_at: batch.ended_at ?? null,
+          yield_grams: batch.yield_grams ?? null,
+          notes: batch.notes ?? null,
+        },
+      }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      console.warn(`[fleet] batch-event ${res.status} for batch ${batch.id}`);
+      return { ok: false, status: res.status };
+    }
+    return { ok: true };
+  } catch (err) {
+    console.warn('[fleet] batch-event forward failed:', err.message);
+    return { ok: false, error: err.message };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 module.exports = {
   start,
   stop,
@@ -578,5 +629,6 @@ module.exports = {
   isConnected,
   buildSnapshot,           // exported for diagnostics / tests
   uploadSnapshotToCloud,   // exported so cv/capture can forward scheduled snapshots (M6)
+  forwardBatchEvent,       // exported so routes/batches can mirror to cloud (P14 M4)
   HEARTBEAT_INTERVAL_MS,
 };
