@@ -57,18 +57,28 @@ function attach(server) {
   });
 
   const heartbeat = setInterval(() => {
+    let alive = 0;
+    let terminated = 0;
     for (const ws of clients) {
       if (ws.isAlive === false) {
         ws.terminate();
         clients.delete(ws);
+        terminated += 1;
         continue;
       }
       ws.isAlive = false;
       try {
         ws.ping();
+        alive += 1;
       } catch {
         clients.delete(ws);
       }
+    }
+    // Diagnostic: surface termination counts so we can see if a CPU
+    // spike during /terminal init caused the existing /ws to miss a
+    // pong and get terminated.
+    if (terminated > 0) {
+      console.log(`[ws] heartbeat tick: alive=${alive} terminated=${terminated}`);
     }
   }, 30000);
   // Don't let the heartbeat keep the event loop alive during shutdown —

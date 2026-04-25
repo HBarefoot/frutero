@@ -363,3 +363,9 @@ export async function setFleetLocalUrl(url) {
 export async function fetchTerminalStatus() {
   return (await api.get('/security/terminal')).data;
 }
+export async function fetchAccessLogState() {
+  return (await api.get('/security/access-log')).data;
+}
+export async function setAccessLogState(enabled) {
+  return (await api.put('/security/access-log', { enabled })).data;
+}

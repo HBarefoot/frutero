@@ -19,7 +19,7 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
-import { fetchTerminalStatus } from '@/lib/api';
+import { fetchAccessLogState, fetchTerminalStatus, setAccessLogState } from '@/lib/api';
 
 // Shows the browser-terminal status (ttyd reachable? password seeded?)
 // and offers a one-click "Open" button + copy-to-clipboard for the
@@ -28,12 +28,33 @@ export function TerminalCard() {
   const toast = useToast();
   const [status, setStatus] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [accessLog, setAccessLog] = useState(null);
+  const [accessLogBusy, setAccessLogBusy] = useState(false);
 
   async function load() {
     try {
-      setStatus(await fetchTerminalStatus());
+      const [t, a] = await Promise.all([
+        fetchTerminalStatus(),
+        fetchAccessLogState().catch(() => ({ enabled: false })),
+      ]);
+      setStatus(t);
+      setAccessLog(a);
     } catch (err) {
       toast.error(err);
+    }
+  }
+
+  async function toggleAccessLog() {
+    setAccessLogBusy(true);
+    try {
+      const next = !(accessLog?.enabled);
+      const out = await setAccessLogState(next);
+      setAccessLog(out);
+      toast.success(next ? 'Access log on (check journalctl)' : 'Access log off');
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setAccessLogBusy(false);
     }
   }
 
@@ -146,6 +167,24 @@ export function TerminalCard() {
           is the single auth + TLS surface. Two layers gate access:
           your Pi session cookie + the ttyd basic-auth credential above.
         </p>
+
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs">
+          <div>
+            <div className="font-medium">Diagnostic access log</div>
+            <div className="text-[11px] text-muted-foreground">
+              Logs every non-poll request to journalctl. Use to investigate
+              connection drops; turn off when done so the journal doesn't fill.
+            </div>
+          </div>
+          <Button
+            onClick={toggleAccessLog}
+            disabled={accessLogBusy}
+            size="sm"
+            variant={accessLog?.enabled ? 'default' : 'outline'}
+          >
+            {accessLog?.enabled ? 'On' : 'Off'}
+          </Button>
+        </div>
 
         {ok && (
           <p className="flex items-center gap-1 text-[11px] text-success">

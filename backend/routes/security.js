@@ -123,6 +123,22 @@ function parseUa(raw) {
   }
 }
 
+// GET/PUT /api/security/access-log — owner-only toggle for the
+// diagnostic access log. Off by default; flip on to investigate the
+// terminal-init connection drop, then flip off so journald doesn't
+// fill up. Reads/writes the access_log_enabled setting which the
+// access-log middleware checks on every request.
+router.get('/security/access-log', auth.requireAdmin, (_req, res) => {
+  const enabled = Q.getAllSettings().access_log_enabled === '1';
+  res.json({ enabled });
+});
+router.put('/security/access-log', auth.requireAdmin, (req, res) => {
+  const enabled = req.body?.enabled === true;
+  Q.setSetting('access_log_enabled', enabled ? '1' : '0');
+  auth.logAudit(req, 'security.access_log.toggle', null, { enabled });
+  res.json({ enabled });
+});
+
 // GET /api/security/terminal — admin-only browser terminal status. Tells
 // the UI whether ttyd is reachable + reveals the password copy-paste-able
 // so the operator doesn't have to dig in /etc/. The password lives in
