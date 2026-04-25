@@ -23,11 +23,36 @@ const router = express.Router();
 // the page itself was served from the same origin via this proxy.
 // The Express requireAdmin middleware checks `req.user`, which the
 // auth middleware populates from the cookie at attachUser time.
+// Auth gate. JSON 401 for API-style requests (XHR / fetch), redirect to
+// /login?next= for browser navigations so the cloud "Open Terminal"
+// button doesn't dump a raw {"error":"unauthenticated"} into a fresh tab.
+function terminalAuthGate(req, res, next) {
+  const adminOK = req.user && auth.PERMISSIONS.admin.includes(req.user.role);
+  if (adminOK) return next();
+  const acceptsHtml = (req.headers.accept || '').includes('text/html');
+  if (acceptsHtml) {
+    const next_ = req.originalUrl || '/terminal/';
+    return res.redirect(302, `/login?next=${encodeURIComponent(next_)}`);
+  }
+  if (!req.user) return res.status(401).json({ error: 'unauthenticated' });
+  return res.status(403).json({ error: 'forbidden', required: 'admin' });
+}
+
 // http-proxy-middleware v3 moved hooks under the `on` map.
 const proxy = createProxyMiddleware({
   target: 'http://127.0.0.1:7681',
   changeOrigin: true,
   ws: true,
+  // Express's router.use('/terminal', ...) strips the prefix from
+  // req.url before this middleware sees it, but ttyd is started with
+  // --base-path /terminal and expects the prefix to be present. Restore
+  // it before forwarding so /terminal/ → ttyd's /terminal/ index, not
+  // the 404-returning bare /.
+  //
+  // WebSocket upgrades go through proxy.upgrade() directly (server.js)
+  // without Express ever touching req.url, so the prefix is still
+  // present. Guard against double-prefixing.
+  pathRewrite: (path) => path.startsWith('/terminal') ? path : `/terminal${path}`,
   on: {
     // Strip security-relevant headers before forwarding so ttyd
     // doesn't see the operator's session cookie. ttyd has its own
@@ -46,7 +71,7 @@ const proxy = createProxyMiddleware({
   },
 });
 
-router.use('/terminal', auth.requireAdmin, proxy);
+router.use('/terminal', terminalAuthGate, proxy);
 
 // Export both router (for HTTP) and the underlying proxy (server.js
 // wires it into the upgrade event for WebSocket forwarding).

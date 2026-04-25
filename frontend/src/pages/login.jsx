@@ -29,7 +29,24 @@ export default function LoginPage() {
 
   if (needsSetup) return <Navigate to="/setup" replace />;
   if (isAuthed) {
-    const to = location.state?.from?.pathname || '/';
+    // Honor ?next= for cross-origin redirects (cloud "Open Terminal"
+    // sends the operator through /login?next=/terminal/). location.state
+    // is only set by in-app navigation, so it doesn't help when arriving
+    // from a fresh tab.
+    const params = new URLSearchParams(location.search);
+    const next_ = params.get('next');
+    const safeNext = next_ && next_.startsWith('/') && !next_.startsWith('//')
+      ? next_
+      : null;
+    // /terminal is a backend-proxy route, not a SPA route — React
+    // Router can't reach it. Force a full-page navigation so Express
+    // gets the request and forwards to ttyd. Falls back to in-app
+    // Navigate for SPA destinations.
+    if (safeNext && safeNext.startsWith('/terminal')) {
+      if (typeof window !== 'undefined') window.location.href = safeNext;
+      return null;
+    }
+    const to = safeNext || location.state?.from?.pathname || '/';
     return <Navigate to={to} replace />;
   }
 
