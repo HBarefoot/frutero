@@ -1,6 +1,7 @@
 const express = require('express');
 const auth = require('../auth');
 const fleet = require('../fleet-agent');
+const { Q } = require('../database');
 
 const router = express.Router();
 
@@ -41,6 +42,20 @@ router.post('/fleet/heartbeat-now', auth.requireAdmin, async (_req, res) => {
 router.delete('/fleet/connection', auth.requireAdmin, (req, res) => {
   fleet.disconnect();
   auth.logAudit(req, 'fleet.disconnect', null, null);
+  res.json({ ok: true, status: fleet.getStatus() });
+});
+
+// PUT /api/fleet/snapshot-forwarding — owner sets the "every Nth scheduled
+// CV capture" cadence for opportunistic snapshot forwarding (M6). N=0
+// disables. Reads are via the regular /fleet/status response.
+router.put('/fleet/snapshot-forwarding', auth.requireAdmin, (req, res) => {
+  const raw = req.body?.every_n;
+  const n = Number.isInteger(raw) ? raw : parseInt(raw, 10);
+  if (!Number.isInteger(n) || n < 0 || n > 1000) {
+    return res.status(400).json({ error: 'invalid_every_n', detail: 'integer 0..1000' });
+  }
+  Q.setSetting('fleet_snapshot_forward_every_n', String(n));
+  auth.logAudit(req, 'fleet.snapshot_forwarding.update', null, { every_n: n });
   res.json({ ok: true, status: fleet.getStatus() });
 });
 

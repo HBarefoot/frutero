@@ -351,3 +351,6 @@ export async function fleetHeartbeatNow() {
 export async function disconnectFleet() {
   return (await api.delete('/fleet/connection')).data;
 }
+export async function setFleetSnapshotForwarding(everyN) {
+  return (await api.put('/fleet/snapshot-forwarding', { every_n: everyN })).data;
+}
