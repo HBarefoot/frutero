@@ -116,14 +116,15 @@ log "Building frontend (as $SERVICE_USER)."
 RUN_AS_USER npm run build
 cd "$ROOT_DIR"
 
-# 4. Copy built frontend into backend/public. Use the operator user
-# for the cp so the public dir stays operator-owned and a later
-# rsync into it doesn't EACCES.
+# 4. Copy built frontend into backend/public.
+# Do the rm + mkdir + cp ALL as the service user so the public dir
+# stays operator-owned end-to-end. Doing rm/mkdir as root and then
+# cp as the service user fails with EACCES because the freshly-
+# created public/ dir would be root-owned.
 log "Publishing frontend to backend/public."
-rm -rf "$BACKEND_DIR/public"
-mkdir -p "$BACKEND_DIR/public"
+RUN_AS_USER rm -rf "$BACKEND_DIR/public"
+RUN_AS_USER mkdir -p "$BACKEND_DIR/public"
 RUN_AS_USER cp -r "$FRONTEND_DIR/dist/." "$BACKEND_DIR/public/"
-chown -R "$SERVICE_USER:$SERVICE_USER" "$BACKEND_DIR/public"
 
 # 5. Seed the database (safe to re-run).
 log "Seeding SQLite database."
