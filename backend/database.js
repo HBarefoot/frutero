@@ -314,6 +314,29 @@ function init() {
       last_seen_at DATETIME
     );
     CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
+
+    -- Custom + AI-suggested species. Operators can add their own
+    -- (e.g. "Pink Oyster", "Reishi"); the AI advisor can fill in
+    -- the regimen via /api/species/suggest-regimen. The three legacy
+    -- presets (oyster/lions_mane/shiitake) get seeded on first boot
+    -- with source='built-in' and stay protected from delete.
+    CREATE TABLE IF NOT EXISTS species (
+      key TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      temp_min REAL NOT NULL,
+      temp_max REAL NOT NULL,
+      humid_min REAL NOT NULL,
+      humid_max REAL NOT NULL,
+      light_hours INTEGER NOT NULL DEFAULT 12,
+      fan_interval INTEGER NOT NULL DEFAULT 30,
+      mister_threshold REAL,
+      mister_pulse_seconds INTEGER,
+      notes TEXT,
+      source TEXT NOT NULL DEFAULT 'custom',
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Additive migration: add user_id to device_log for attribution on
@@ -331,6 +354,7 @@ function init() {
 
   seedIfEmpty();
   seedActuatorsIfEmpty();
+  seedSpeciesIfEmpty();
   ensureTokenPepper();
   migrateTokenHashesIfNeeded();
 }
@@ -443,6 +467,36 @@ function seedActuatorsIfEmpty() {
   );
   insert.run('fan', 'Fans', 'fan', config.FAN_PIN, config.FAN_INVERTED ? 1 : 0, config.FAN_ON_DURATION);
   insert.run('light', 'Grow Lights', 'light', config.LIGHT_PIN, config.LIGHT_INVERTED ? 1 : 0, null);
+}
+
+// Mirror config.SPECIES_PRESETS into the species table on first boot
+// so the existing 3 presets survive the move from hardcoded → DB.
+// Once seeded, operators can edit / add custom species without
+// touching code.
+function seedSpeciesIfEmpty() {
+  const n = db.prepare('SELECT COUNT(*) AS n FROM species').get().n;
+  if (n > 0) return;
+
+  const insert = db.prepare(
+    `INSERT INTO species
+       (key, name, temp_min, temp_max, humid_min, humid_max,
+        light_hours, fan_interval, mister_threshold,
+        mister_pulse_seconds, notes, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'built-in')`
+  );
+  for (const [key, p] of Object.entries(config.SPECIES_PRESETS || {})) {
+    insert.run(
+      key,
+      p.name,
+      p.temp_min, p.temp_max,
+      p.humid_min, p.humid_max,
+      p.light_hours,
+      p.fan_interval,
+      p.mister_threshold ?? null,
+      p.mister_pulse_seconds ?? null,
+      null
+    );
+  }
 }
 
 function getDb() {
@@ -1517,6 +1571,73 @@ const Q = {
          LIMIT ?`
       )
       .all(limit);
+  },
+
+  // Species CRUD --------------------------------------------------------
+  listSpecies() {
+    return getDb()
+      .prepare(
+        `SELECT key, name, temp_min, temp_max, humid_min, humid_max,
+                light_hours, fan_interval, mister_threshold,
+                mister_pulse_seconds, notes, source, created_by,
+                created_at, updated_at
+         FROM species
+         ORDER BY source ASC, name ASC`
+      )
+      .all();
+  },
+  getSpecies(key) {
+    return getDb()
+      .prepare('SELECT * FROM species WHERE key = ?')
+      .get(key) || null;
+  },
+  insertSpecies(s) {
+    return getDb()
+      .prepare(
+        `INSERT INTO species
+           (key, name, temp_min, temp_max, humid_min, humid_max,
+            light_hours, fan_interval, mister_threshold,
+            mister_pulse_seconds, notes, source, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        s.key, s.name,
+        s.temp_min, s.temp_max,
+        s.humid_min, s.humid_max,
+        s.light_hours ?? 12,
+        s.fan_interval ?? 30,
+        s.mister_threshold ?? null,
+        s.mister_pulse_seconds ?? null,
+        s.notes ?? null,
+        s.source || 'custom',
+        s.created_by ?? null
+      );
+  },
+  updateSpecies(key, fields) {
+    const allowed = [
+      'name', 'temp_min', 'temp_max', 'humid_min', 'humid_max',
+      'light_hours', 'fan_interval', 'mister_threshold',
+      'mister_pulse_seconds', 'notes',
+    ];
+    const sets = [];
+    const params = [];
+    for (const k of allowed) {
+      if (k in fields) {
+        sets.push(`${k} = ?`);
+        params.push(fields[k]);
+      }
+    }
+    if (sets.length === 0) return { changes: 0 };
+    sets.push("updated_at = CURRENT_TIMESTAMP");
+    params.push(key);
+    return getDb()
+      .prepare(`UPDATE species SET ${sets.join(', ')} WHERE key = ?`)
+      .run(...params);
+  },
+  deleteSpecies(key) {
+    return getDb()
+      .prepare('DELETE FROM species WHERE key = ?')
+      .run(key);
   },
 };
 
