@@ -42,7 +42,7 @@ export function Topbar({ onOpenNav }) {
           </Button>
           <div className="flex min-w-0 flex-col leading-tight">
             <span className="truncate text-sm font-medium text-foreground">
-              Chamber&nbsp;1
+              {status?.chamber_name || 'Chamber'}
             </span>
             <span className="truncate text-[11px] text-muted-foreground">
               {status?.sensor?.simulated ? 'Simulated sensor · ' : ''}
