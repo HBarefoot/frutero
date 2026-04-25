@@ -102,15 +102,68 @@ node "$BACKEND_DIR/scripts/seed.js"
 TLS_DIR="/etc/frutero"
 TLS_KEY="$TLS_DIR/server.key"
 TLS_CERT="$TLS_DIR/server.crt"
-if [ ! -f "$TLS_KEY" ] || [ ! -f "$TLS_CERT" ]; then
+# Build the SAN list dynamically so the cert covers every address the
+# operator might use to reach this Pi: hostname.local, localhost, all
+# detected non-loopback IPv4 addresses (including LAN + Tailscale +
+# any tunnel interfaces), and the Cloudflare Tunnel hostname when one
+# is configured. Anything in the cert SAN list won't trigger a browser
+# cert warning AND can register a service worker.
+build_sans() {
+  local sans="DNS:${PI_HOSTNAME}.local,DNS:localhost,IP:127.0.0.1"
+  # All non-loopback IPv4 addresses
+  local ip
+  for ip in $(hostname -I 2>/dev/null); do
+    if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      sans+=",IP:${ip}"
+    fi
+  done
+  # Tailscale: explicit query in case the interface isn't named tailscale0
+  if command -v tailscale >/dev/null 2>&1; then
+    local ts_ip
+    ts_ip="$(tailscale ip -4 2>/dev/null | head -1 || true)"
+    if [[ "$ts_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && [[ ",${sans}," != *",IP:${ts_ip},"* ]]; then
+      sans+=",IP:${ts_ip}"
+    fi
+    # Tailscale magic DNS hostname (e.g. <hostname>.<tailnet>.ts.net)
+    local ts_dns
+    ts_dns="$(tailscale status --self --json 2>/dev/null | grep -oE '"DNSName"\s*:\s*"[^"]+"' | head -1 | sed 's/.*"\([^"]\+\)"$/\1/' | sed 's/\.$//' || true)"
+    if [ -n "$ts_dns" ]; then
+      sans+=",DNS:${ts_dns}"
+    fi
+  fi
+  # Cloudflare Tunnel hostname from the operator's config (if any)
+  local cf_yml
+  for cf_yml in /etc/cloudflared/config.yml /etc/cloudflared/config.yaml; do
+    if [ -f "$cf_yml" ]; then
+      local cf_host
+      cf_host="$(grep -oE "hostname:\s*['\"]?[a-zA-Z0-9.-]+" "$cf_yml" | head -1 | sed 's/hostname:[[:space:]]*//;s/[\"'\'']//g' || true)"
+      if [ -n "$cf_host" ]; then
+        sans+=",DNS:${cf_host}"
+      fi
+      break
+    fi
+  done
+  echo "$sans"
+}
+
+PI_HOSTNAME="$(hostname)"
+ROTATE_CERT="${ROTATE_CERT:-false}"
+
+if [ "$ROTATE_CERT" = "true" ] || [ ! -f "$TLS_KEY" ] || [ ! -f "$TLS_CERT" ]; then
+  if [ -f "$TLS_CERT" ]; then
+    log "Rotating TLS cert with current network state."
+    sudo mv "$TLS_CERT" "${TLS_CERT}.bak.$(date +%s)"
+    sudo mv "$TLS_KEY" "${TLS_KEY}.bak.$(date +%s)" 2>/dev/null || true
+  fi
+  TLS_SANS="$(build_sans)"
   log "Generating self-signed TLS cert (10 year validity) at $TLS_DIR."
+  log "  SANs: $TLS_SANS"
   sudo mkdir -p "$TLS_DIR"
-  PI_HOSTNAME="$(hostname)"
   sudo openssl req -x509 -newkey rsa:4096 -nodes \
     -keyout "$TLS_KEY" -out "$TLS_CERT" \
     -days 3650 \
     -subj "/CN=${PI_HOSTNAME}.local" \
-    -addext "subjectAltName=DNS:${PI_HOSTNAME}.local,DNS:localhost,IP:127.0.0.1" \
+    -addext "subjectAltName=${TLS_SANS}" \
     >/dev/null 2>&1
   # Cert must be group-readable by the service user. When install.sh is
   # invoked via sudo, $USER is 'root' and SUDO_USER is the real user —
@@ -120,7 +173,7 @@ if [ ! -f "$TLS_KEY" ] || [ ! -f "$TLS_CERT" ]; then
   sudo chmod 640 "$TLS_KEY"
   sudo chmod 644 "$TLS_CERT"
 else
-  log "TLS cert already present at $TLS_CERT."
+  log "TLS cert already present at $TLS_CERT (run with ROTATE_CERT=true to regenerate with current network state)."
 fi
 
 # 7. Install systemd unit + TLS env drop-in.
