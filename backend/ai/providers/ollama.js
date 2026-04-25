@@ -38,6 +38,12 @@ async function invoke({ systemPrompt, userText, model, images }) {
     // Use /api/chat (chat-style, newer endpoint). We ask for JSON format
     // so small local models stay on-schema — critical because we then
     // JSON.parse the response downstream.
+    //
+    // think:false disables reasoning on thinking-capable models (qwen3,
+    // deepseek-r1, etc.). Without it, those models route their output
+    // into `message.thinking` under the format:'json' constraint and
+    // leave `message.content` empty — surfacing as "model response was
+    // empty" downstream.
     res = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -46,6 +52,7 @@ async function invoke({ systemPrompt, userText, model, images }) {
         model: effective,
         stream: false,
         format: 'json',
+        think: false,
         options: {
           // Keep the response terse. Smaller models will ramble otherwise.
           num_predict: 1024,
@@ -78,6 +85,26 @@ async function invoke({ systemPrompt, userText, model, images }) {
 
   const payload = await res.json();
   const text = payload?.message?.content || '';
+
+  if (!text) {
+    // Some thinking models ignore think:false and route the response
+    // into `thinking` instead of `content`. Fall back to thinking when
+    // it looks like JSON; otherwise raise a targeted error so the user
+    // knows what's wrong (rather than the generic "empty response").
+    const thinking = payload?.message?.thinking || '';
+    if (thinking.trim().startsWith('{')) {
+      return {
+        raw_text: thinking,
+        input_tokens: payload.prompt_eval_count ?? null,
+        output_tokens: payload.eval_count ?? null,
+        model: effective,
+      };
+    }
+    throw new Error(
+      `ollama returned empty content from ${effective}` +
+      (thinking ? ` (got ${thinking.length} chars of thinking; the model ignored think:false — try a non-thinking model like llama3.2 or qwen2.5:7b)` : ` — the model may have hit its context limit or rejected the JSON-format constraint`)
+    );
+  }
 
   return {
     raw_text: text,
