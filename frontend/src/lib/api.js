@@ -360,3 +360,6 @@ export async function resyncFleetBatches() {
 export async function setFleetLocalUrl(url) {
   return (await api.put('/fleet/local-url', { url })).data;
 }
+export async function fetchTerminalStatus() {
+  return (await api.get('/security/terminal')).data;
+}

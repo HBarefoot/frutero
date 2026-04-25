@@ -147,6 +147,67 @@ else
   fail "Missing service file at $SERVICE_FILE"
 fi
 
+# 7c. Browser terminal (ttyd + dedicated systemd unit + Express proxy).
+#     ttyd binds to loopback only; the Express HTTPS proxy at /terminal
+#     is the single auth + TLS surface. Idempotent — skips work that's
+#     already done.
+TTYD_VERSION="1.7.7"
+TERMINAL_SERVICE_FILE="$ROOT_DIR/service/frutero-terminal.service"
+TERMINAL_SERVICE_NAME="frutero-terminal"
+TERMINAL_ENV_FILE="/etc/frutero-terminal.env"
+
+if ! command -v ttyd >/dev/null 2>&1; then
+  ARCH="$(uname -m)"
+  case "$ARCH" in
+    aarch64|arm64) TTYD_ASSET="ttyd.aarch64" ;;
+    armv7l|armhf)  TTYD_ASSET="ttyd.armhf" ;;
+    x86_64|amd64)  TTYD_ASSET="ttyd.x86_64" ;;
+    *) TTYD_ASSET="" ;;
+  esac
+  if [ -n "$TTYD_ASSET" ]; then
+    TTYD_URL="https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/${TTYD_ASSET}"
+    log "Downloading ttyd ${TTYD_VERSION} (${ARCH})."
+    if sudo curl -fsSL "$TTYD_URL" -o /usr/local/bin/ttyd; then
+      sudo chmod +x /usr/local/bin/ttyd
+      log "Installed ttyd at /usr/local/bin/ttyd."
+    else
+      warn "ttyd download failed; browser terminal disabled. Re-run install.sh once network is back."
+    fi
+  else
+    warn "Unrecognized arch '$ARCH' — skipping ttyd. Browser terminal disabled."
+  fi
+fi
+
+if command -v ttyd >/dev/null 2>&1 && [ -r "$TERMINAL_SERVICE_FILE" ]; then
+  # Generate a random password if no env file yet. Persisted across
+  # re-runs so the URL stays stable; rotate by deleting the env file
+  # and re-running this section.
+  if [ ! -f "$TERMINAL_ENV_FILE" ]; then
+    log "Generating browser terminal password."
+    TERM_PWD="$(openssl rand -hex 16)"
+    sudo tee "$TERMINAL_ENV_FILE" >/dev/null <<EOF
+TERMINAL_PASSWORD=$TERM_PWD
+EOF
+    sudo chmod 600 "$TERMINAL_ENV_FILE"
+    sudo chown root:root "$TERMINAL_ENV_FILE"
+    # Mirror into the Pi's secrets table so the UI can show it copy-
+    # paste-able. The backend reads from secrets, not the env file
+    # directly, so it doesn't need root permissions.
+    SERVICE_USER="${SUDO_USER:-$USER}"
+    sudo -u "$SERVICE_USER" node -e "
+      const db = require('$BACKEND_DIR/database');
+      db.init();
+      db.Q.setSecret('terminal_password', '$TERM_PWD');
+    " || warn "Could not seed terminal_password into secrets; UI will say 'unknown'."
+  fi
+
+  log "Installing systemd service ($TERMINAL_SERVICE_NAME)."
+  sudo cp "$TERMINAL_SERVICE_FILE" "/etc/systemd/system/${TERMINAL_SERVICE_NAME}.service"
+  sudo systemctl daemon-reload
+  sudo systemctl enable "$TERMINAL_SERVICE_NAME" >/dev/null
+  sudo systemctl restart "$TERMINAL_SERVICE_NAME" || warn "ttyd failed to start — check journalctl -u $TERMINAL_SERVICE_NAME"
+fi
+
 # 7b. Cap journald disk usage so months of uptime don't eat the SD card.
 #     Idempotent — only writes if missing. Values chosen to leave plenty of
 #     room for investigation while being boring and safe on 16–32GB cards.

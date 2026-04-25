@@ -1,0 +1,40 @@
+[Unit]
+Description=frutero browser terminal (ttyd)
+After=network.target
+# Lifecycle is independent of the main mushroom-automation unit so a
+# crash in one doesn't take the other down. The Express proxy at
+# /terminal degrades to a 502 if ttyd is down; the operator can also
+# fall back to real SSH.
+
+[Service]
+# install.sh writes the password to this env file. Systemd expands
+# ${TERMINAL_PASSWORD} in the ExecStart line below at start time.
+EnvironmentFile=/etc/frutero-terminal.env
+
+# Bind to loopback only — never externally exposed. The Express proxy
+# at /terminal/ is the single auth + TLS surface. --base-path lets
+# ttyd's HTML serve assets relative to /terminal/ so the proxy doesn't
+# have to rewrite client-side paths.
+#
+# No hardening flags (ProtectSystem etc.) — this IS the operator's
+# admin shell, restricting it would defeat the feature. The threat
+# model is "operator with valid Pi session opens a terminal", not
+# "untrusted process needs sandboxing".
+ExecStart=/usr/local/bin/ttyd \
+  --port 7681 \
+  --interface 127.0.0.1 \
+  --base-path /terminal \
+  --credential frutero:${TERMINAL_PASSWORD} \
+  --writable \
+  bash
+
+# Run as the same admin user as the main service so shells land in
+# their home directory and inherit group memberships (gpio, etc.).
+User=admin
+Group=admin
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

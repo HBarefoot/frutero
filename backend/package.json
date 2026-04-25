@@ -20,6 +20,7 @@
     "express": "^4.21.1",
     "express-fileupload": "^1.5.2",
     "helmet": "^8.1.0",
+    "http-proxy-middleware": "^3.0.5",
     "node-schedule": "^2.1.1",
     "nodemailer": "^8.0.6",
     "ua-parser-js": "^2.0.9",
