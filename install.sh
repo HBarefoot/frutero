@@ -67,29 +67,46 @@ else
   log "System packages already present."
 fi
 
+# When invoked via sudo, $USER is 'root' and $SUDO_USER is the real
+# operator. Run npm install + build as the operator so the resulting
+# files in node_modules/ + dist/ are owned by them — otherwise a
+# later `npm run build` (post-cutover, as the operator) fails with
+# EACCES trying to clean dist/.
+SERVICE_USER="${SUDO_USER:-$USER}"
+RUN_AS_USER() {
+  if [ "$EUID" -eq 0 ] && [ "$SERVICE_USER" != "root" ]; then
+    sudo -u "$SERVICE_USER" --preserve-env=PATH "$@"
+  else
+    "$@"
+  fi
+}
+
 # 2. Backend deps.
-log "Installing backend dependencies."
+log "Installing backend dependencies (as $SERVICE_USER)."
 cd "$BACKEND_DIR"
-npm install --omit=optional
+RUN_AS_USER npm install --omit=optional
 # Install DHT sensor lib opportunistically — non-fatal if it fails.
-if ! npm install node-dht-sensor 2>/dev/null; then
+if ! RUN_AS_USER npm install node-dht-sensor 2>/dev/null; then
   warn "node-dht-sensor install failed — that's fine while SENSOR_AVAILABLE=false. Retry when wiring the sensor."
 fi
 cd "$ROOT_DIR"
 
 # 3. Frontend deps + build.
-log "Installing frontend dependencies."
+log "Installing frontend dependencies (as $SERVICE_USER)."
 cd "$FRONTEND_DIR"
-npm install
-log "Building frontend."
-npm run build
+RUN_AS_USER npm install
+log "Building frontend (as $SERVICE_USER)."
+RUN_AS_USER npm run build
 cd "$ROOT_DIR"
 
-# 4. Copy built frontend into backend/public.
+# 4. Copy built frontend into backend/public. Use the operator user
+# for the cp so the public dir stays operator-owned and a later
+# rsync into it doesn't EACCES.
 log "Publishing frontend to backend/public."
 rm -rf "$BACKEND_DIR/public"
 mkdir -p "$BACKEND_DIR/public"
-cp -r "$FRONTEND_DIR/dist/." "$BACKEND_DIR/public/"
+RUN_AS_USER cp -r "$FRONTEND_DIR/dist/." "$BACKEND_DIR/public/"
+chown -R "$SERVICE_USER:$SERVICE_USER" "$BACKEND_DIR/public"
 
 # 5. Seed the database (safe to re-run).
 log "Seeding SQLite database."
