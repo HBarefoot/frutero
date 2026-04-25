@@ -57,12 +57,17 @@ const proxy = createProxyMiddleware({
     // Strip security-relevant headers before forwarding so ttyd
     // doesn't see the operator's session cookie. ttyd has its own
     // credential gate; cross-leakage isn't useful.
-    proxyReq: (proxyReq) => {
+    proxyReq: (proxyReq, req) => {
       proxyReq.removeHeader('cookie');
+      // Diagnostic: log each HTTP request hitting the proxy. Helps see
+      // when ttyd's HTML + JS bundle loads pile up during a fresh
+      // terminal init.
+      console.log(`[terminal] proxy http: ${req.method} ${req.url}`);
     },
     // Make the "ttyd not running" path return a clean 502 instead of
     // a default error page — operator sees state via /security/terminal.
-    error: (_err, _req, res) => {
+    error: (err, req, res) => {
+      console.log(`[terminal] proxy error: ${err.code || err.message} (${req.url})`);
       if (res && res.writableEnded === false) {
         res.statusCode = 502;
         res.end('terminal_unreachable');

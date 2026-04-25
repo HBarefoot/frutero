@@ -16,6 +16,7 @@ const automations = require('./automations');
 const auth = require('./auth');
 const { securityHeaders } = require('./middleware/security-headers');
 const { originCheck } = require('./middleware/origin-check');
+const accessLog = require('./middleware/access-log');
 const { loadTlsCredentials } = require('./tls');
 
 const authRoutes = require('./routes/auth');
@@ -79,6 +80,9 @@ async function main() {
     abortOnLimit: true,
   }));
   app.use(auth.attachUser);
+  // Diagnostic access log; reads its enabled flag on every request so
+  // operators can toggle it from the Security page without restarting.
+  app.use(accessLog());
 
   // Unauthenticated healthcheck. Lightweight probe for load balancers,
   // monitoring, and the future cloud fleet agent. Never exposes PII.
@@ -195,6 +199,10 @@ async function main() {
   //   anything else → destroyed
   primaryServer.on('upgrade', (req, socket, head) => {
     const url = req.url || '';
+    const hasCookie = !!(req.headers.cookie && req.headers.cookie.length > 0);
+    // Diagnostic: every upgrade gets one log line so we can correlate
+    // /terminal/ws upgrades with /ws disconnects in the same window.
+    console.log(`[upgrade] ${new Date().toISOString()} url=${url} cookie=${hasCookie}`);
     if (url === '/ws' || url.startsWith('/ws?')) {
       ws.handleUpgrade(req, socket, head);
       return;
@@ -202,13 +210,16 @@ async function main() {
     if (url.startsWith('/terminal')) {
       const sess = auth.resolveSessionFromHeader(req.headers.cookie);
       if (!sess?.user || !auth.PERMISSIONS.admin.includes(sess.user.role)) {
+        console.log('[upgrade] /terminal denied: not admin');
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
       }
+      console.log(`[upgrade] /terminal proxy → 127.0.0.1:7681 (user=${sess.user.email})`);
       terminalRoute.proxy.upgrade(req, socket, head);
       return;
     }
+    console.log(`[upgrade] unhandled url=${url}, destroying socket`);
     socket.destroy();
   });
 
