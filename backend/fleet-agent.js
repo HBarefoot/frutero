@@ -20,21 +20,60 @@ const gpio = require('./gpio');
 const host = require('./host');
 const batches = require('./batches');
 const config = require('./config');
+const tunnels = require('./tunnels');
+
+// Cached candidate list. Tunnel detection involves a few cheap shell
+// calls + an HTTP probe (ngrok); we don't want to run it on every
+// heartbeat (every 60s) since it's probably stable for minutes.
+// Re-detect every 5 minutes.
+const CANDIDATE_TTL_MS = 5 * 60 * 1000;
+let cachedCandidates = null;
+let cachedAt = 0;
+
+async function getCandidates() {
+  const now = Date.now();
+  if (cachedCandidates && now - cachedAt < CANDIDATE_TTL_MS) {
+    return cachedCandidates;
+  }
+  cachedCandidates = await tunnels.detectTunnels();
+  cachedAt = now;
+  return cachedCandidates;
+}
+
+// Synchronous variant — uses the cached value if present, falls back
+// to LAN-only detection. Kept synchronous so buildSnapshot() doesn't
+// have to become async.
+function getCandidatesSync() {
+  if (cachedCandidates) return cachedCandidates;
+  // Cold cache: include just the synchronous detectors so the first
+  // heartbeat after boot still gets a non-empty list. ngrok is async
+  // and will appear on the next refresh.
+  return [
+    tunnels.detectCloudflareTunnel(),
+    tunnels.detectTailscale(),
+    tunnels.detectLan(),
+  ].filter(Boolean);
+}
+
+// Kick off an async refresh whenever the cache is cold or stale.
+// Fire-and-forget — return value never awaited from the heartbeat
+// path, so tunnel detection latency never blocks heartbeats.
+function refreshCandidatesAsync() {
+  if (cachedCandidates && Date.now() - cachedAt < CANDIDATE_TTL_MS) return;
+  getCandidates().catch((err) => console.warn('[fleet] tunnel detect failed:', err.message));
+}
 
 // Computes the URL the cloud should link to to reach this Pi's local UI.
-// Priority: settings.pi_local_url override → auto-derive from primary
-// IPv4 + the active server port (HTTPS_PORT when TLS, else PORT).
-// Returns null when no usable interface + no override (fine — cloud
-// will hide the "Open Pi" link).
+// Priority: settings.pi_local_url override → first detected tunnel
+// (Cloudflare > Tailscale > ngrok > LAN). Returns null when nothing
+// is detected and no override is set (cloud hides the link).
 function computeLocalUrl() {
   const override = (db.Q.getAllSettings().pi_local_url || '').trim();
   if (override) return override;
-  const ip = host.getPrimaryIPv4();
-  if (!ip) return null;
-  const tlsActive = config.TLS_ENABLED && config.TLS_KEY_PATH && config.TLS_CERT_PATH;
-  const port = tlsActive ? config.HTTPS_PORT : config.PORT;
-  const scheme = tlsActive ? 'https' : 'http';
-  return `${scheme}://${ip}:${port}`;
+  refreshCandidatesAsync();
+  const candidates = getCandidatesSync();
+  if (candidates.length > 0) return candidates[0].url;
+  return null;
 }
 
 const HEARTBEAT_INTERVAL_MS = 60 * 1000;
@@ -75,19 +114,14 @@ function getStatus() {
     last_error: lastError,
     interval_seconds: HEARTBEAT_INTERVAL_MS / 1000,
     snapshot_forward_every_n: forwardEveryN,
-    // M3: surface effective + override + auto-detected default so the
-    // Security Fleet card can show "Detected: X / Override: Y / Save".
+    // M3 + tunnel auto-detect: surface effective + override + every
+    // detected candidate so the Security Fleet card can show a chip
+    // picker (Cloudflare / Tailscale / ngrok / LAN) instead of just
+    // a single auto-detected URL.
     local_url: {
       effective: computeLocalUrl(),
       override,
-      auto_detected: (() => {
-        const ip = host.getPrimaryIPv4();
-        if (!ip) return null;
-        const tlsActive = config.TLS_ENABLED && config.TLS_KEY_PATH && config.TLS_CERT_PATH;
-        const port = tlsActive ? config.HTTPS_PORT : config.PORT;
-        const scheme = tlsActive ? 'https' : 'http';
-        return `${scheme}://${ip}:${port}`;
-      })(),
+      candidates: getCandidatesSync(),
     },
   };
 }
