@@ -30,6 +30,7 @@ import {
   setFleetLocalUrl,
   setFleetSnapshotForwarding,
 } from '@/lib/api';
+import { TerminalSection } from '@/components/security/terminal-card';
 import { formatRelative } from '@/lib/format';
 
 export function FleetCard() {
@@ -201,6 +202,7 @@ export function FleetCard() {
               busy={busy}
               setBusy={setBusy}
             />
+            <TerminalSection />
           </>
         ) : (
           <>
