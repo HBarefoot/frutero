@@ -4,6 +4,7 @@ const notifications = require('../notifications');
 const { SYSTEM_PROMPT, buildContext, userPrompt } = require('./prompt');
 const anthropic = require('./providers/anthropic');
 const ollama = require('./providers/ollama');
+const { extractJsonBlock } = require('./parse-json');
 
 // Central advisor. Reads settings to pick a provider, snapshots chamber
 // state, calls the LLM, parses + validates the response shape, persists
@@ -27,18 +28,7 @@ function providerFor(name) {
 }
 
 function parseInsights(rawText) {
-  // Try strict JSON parse first. If the model wrapped it in prose or a
-  // fence (happens with smaller local models despite our "no fences"
-  // instruction), fish out the largest {...} block as a fallback.
-  const trimmed = (rawText || '').trim();
-  let parsed;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    const m = trimmed.match(/\{[\s\S]*\}/);
-    if (!m) throw new Error('model response was not JSON');
-    parsed = JSON.parse(m[0]);
-  }
+  const parsed = extractJsonBlock(rawText);
 
   const insights = Array.isArray(parsed?.insights) ? parsed.insights : [];
   const cleaned = [];

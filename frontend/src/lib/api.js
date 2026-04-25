@@ -118,6 +118,9 @@ export async function updateAIInsight(id, status) {
 export async function runAIAdvisor() {
   return (await api.post('/ai/run')).data;
 }
+export async function fetchAILastRun() {
+  return (await api.get('/ai/last-run')).data;
+}
 
 // --- Batches ---------------------------------------------------------
 export async function fetchBatches() {

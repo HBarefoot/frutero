@@ -36,6 +36,7 @@ import { useAuth } from '@/lib/auth-context';
 import {
   fetchAIConfig,
   fetchAIInsights,
+  fetchAILastRun,
   saveAIConfig,
   updateAIInsight,
   updateBatch,
@@ -75,26 +76,42 @@ export default function AIPage() {
     return () => clearInterval(t);
   }, []);
 
-  // Fast-poll while a run is in flight. Clears itself when a new
-  // insight arrives (count > baseline) or after 3 minutes.
+  // Fast-poll while a run is in flight. Clears when the backend's
+  // last-run record matches our started_at (success or failure), or
+  // after 3 minutes as a hard ceiling. Polling /ai/last-run alongside
+  // /ai/insights lets us surface failures (Ollama unreachable, parse
+  // errors, etc.) that would otherwise be invisible since a failed run
+  // produces zero new insights.
   useEffect(() => {
     if (!activeRun) return;
     const fast = setInterval(async () => {
       try {
-        const ins = await fetchAIInsights(50);
+        const [ins, lr] = await Promise.all([
+          fetchAIInsights(50),
+          fetchAILastRun(),
+        ]);
         setInsights(ins);
-        const newCount = ins.count_24h ?? 0;
-        if (newCount > activeRun.baselineCount) {
-          toast.success(
-            `${newCount - activeRun.baselineCount} insight(s) generated via ${activeRun.provider}`
-          );
+        const last = lr?.last_run;
+        const finished = last
+          && last.started_at >= activeRun.startedAt
+          && last.finished_at;
+        if (finished) {
+          if (last.ok === false) {
+            toast.error(`AI run failed: ${last.error || 'unknown error'}`);
+          } else if ((last.insights ?? 0) > 0) {
+            toast.success(
+              `${last.insights} insight(s) generated via ${activeRun.provider}`
+            );
+          } else {
+            toast.info('Run finished — no new insights this time.');
+          }
           setActiveRun(null);
           return;
         }
         if (Date.now() - activeRun.startedAt > 3 * 60 * 1000) {
-          // Ran long enough that we should stop burning polls. Likely
-          // either a silent failure or a very slow local model. Either
-          // way the 30s polling below will still pick it up.
+          // Hard ceiling — the run is genuinely long (large local model)
+          // or stuck. The 30s background poll will still pick up the
+          // result when it lands.
           toast.warn('Run is taking longer than 3 minutes — still running in the background');
           setActiveRun(null);
         }
@@ -117,7 +134,9 @@ export default function AIPage() {
       } else if (result.started) {
         const baselineCount = insights?.count_24h ?? 0;
         setActiveRun({
-          startedAt: Date.now(),
+          // Backend's started_at is authoritative — use it so the
+          // last-run correlation in the fast-poll matches exactly.
+          startedAt: result.started_at ?? Date.now(),
           provider: result.provider,
           model: result.model,
           baselineCount,
