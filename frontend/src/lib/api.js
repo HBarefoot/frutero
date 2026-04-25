@@ -350,7 +350,10 @@ export async function deleteSpecies(key) {
   return (await api.delete(`/species/${encodeURIComponent(key)}`)).data;
 }
 export async function suggestSpeciesRegimen(payload) {
-  return (await api.post('/species/suggest-regimen', payload)).data;
+  // Anthropic Opus + adaptive thinking can take 5-30s for the
+  // structured-JSON regimen response. The global 10s default is
+  // too tight; allow up to 60s per request.
+  return (await api.post('/species/suggest-regimen', payload, { timeout: 60000 })).data;
 }
 
 // Fleet (cloud control plane) — owner-only.
