@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Download, Save, Settings2, RefreshCw } from 'lucide-react';
+import { Camera, Download, Save, Settings2, RefreshCw, Moon, Sun } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -33,6 +33,7 @@ export default function CameraPage() {
   const [streamMode, setStreamMode] = useState(false);
   const [snapTick, setSnapTick] = useState(Date.now());
   const [error, setError] = useState(null);
+  const [lowlightBusy, setLowlightBusy] = useState(false);
   const imgRef = useRef(null);
 
   async function reload() {
@@ -43,6 +44,24 @@ export default function CameraPage() {
   useEffect(() => { reload(); }, []);
 
   function refreshSnap() { setSnapTick(Date.now()); }
+
+  async function toggleLowlight() {
+    if (!isOwner || !status || lowlightBusy) return;
+    const next = status.lowlight_mode === 'on' ? 'off' : 'on';
+    setLowlightBusy(true);
+    setError(null);
+    try {
+      await saveCameraConfig({ lowlight_mode: next });
+      await reload();
+      // Force the live <img> to reload so the new exposure takes effect
+      // immediately rather than after the user manually clicks refresh.
+      setSnapTick(Date.now());
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setLowlightBusy(false);
+    }
+  }
 
   function downloadSnap() {
     const a = document.createElement('a');
@@ -63,6 +82,22 @@ export default function CameraPage() {
             <Badge variant={status?.available ? 'success' : 'muted'}>
               {status?.available ? 'live' : status?.stub ? 'stub' : 'offline'}
             </Badge>
+            {isOwner && (
+              <Button
+                variant={status?.lowlight_mode === 'on' ? 'soft' : 'outline'}
+                size="sm"
+                onClick={toggleLowlight}
+                disabled={lowlightBusy || !status?.available}
+                title={
+                  status?.lowlight_mode === 'on'
+                    ? 'Low-light mode on — gain + brightness boost. Standard webcams have no IR; useful in dim light, not pitch black.'
+                    : 'Engage low-light mode (gain + brightness boost). Note: this is NOT IR night vision.'
+                }
+              >
+                {status?.lowlight_mode === 'on' ? <Moon /> : <Sun />}
+                {status?.lowlight_mode === 'on' ? 'Low-light: on' : 'Low-light: off'}
+              </Button>
+            )}
             <Button
               variant={streamMode ? 'soft' : 'outline'}
               size="sm"
