@@ -1,11 +1,35 @@
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const { Q } = require('./database');
 
 const DEFAULT_DEVICE = '/dev/video0';
 const DEFAULT_RES = '640x480';
 const DEFAULT_FPS = 10;
 const DEFAULT_QUALITY = 7; // ffmpeg -q:v scale (lower = better)
+
+// MJPEG-passthrough probe. UVC webcams that natively output Motion-JPEG
+// (e.g. Logitech C920/C922) let us skip a YUYV→JPEG software re-encode on
+// every frame. On a Pi 4B that re-encode is the difference between a smooth
+// stream and CPU-bound stutter. We probe `v4l2-ctl --list-formats-ext`
+// once per device path and cache; if MJPG is offered we add
+// `-input_format mjpeg` to the ffmpeg invocation and switch the codec to
+// `copy` so ffmpeg just relays bytes.
+const mjpegProbeCache = new Map(); // device path -> bool
+function supportsMjpeg(device) {
+  if (mjpegProbeCache.has(device)) return mjpegProbeCache.get(device);
+  let supported = false;
+  try {
+    const out = execFileSync('v4l2-ctl', ['-d', device, '--list-formats-ext'], {
+      encoding: 'utf8',
+      timeout: 2000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    supported = /MJPG|Motion-JPEG/.test(out);
+  } catch { /* v4l2-ctl missing, device gone, or perms — fall back to YUYV */ }
+  mjpegProbeCache.set(device, supported);
+  console.log(`[camera] ${device}: MJPEG passthrough ${supported ? 'enabled (-c:v copy)' : 'unavailable (YUYV re-encode)'}`);
+  return supported;
+}
 
 // UVC webcams enforce single-reader: only one process can hold /dev/videoN
 // at a time. When the user toggles stream → snapshot the kernel takes a
@@ -95,18 +119,16 @@ async function snapshot(res) {
   // races and hits EBUSY.
   await killCurrent();
 
+  const useMjpeg = supportsMjpeg(cfg.device);
+  const inputArgs = ['-f', 'v4l2'];
+  if (useMjpeg) inputArgs.push('-input_format', 'mjpeg');
+  inputArgs.push('-video_size', cfg.resolution, '-i', cfg.device);
+  const outputArgs = useMjpeg
+    ? ['-frames:v', '1', '-c:v', 'copy', '-f', 'mjpeg', '-']
+    : ['-frames:v', '1', '-q:v', String(cfg.quality), '-f', 'image2', '-'];
   const ff = spawn(
     'ffmpeg',
-    [
-      '-hide_banner', '-loglevel', 'error',
-      '-f', 'v4l2',
-      '-video_size', cfg.resolution,
-      '-i', cfg.device,
-      '-frames:v', '1',
-      '-q:v', String(cfg.quality),
-      '-f', 'image2',
-      '-',
-    ],
+    ['-hide_banner', '-loglevel', 'error', ...inputArgs, ...outputArgs],
     { stdio: ['ignore', 'pipe', 'pipe'] }
   );
   trackFfmpeg(ff);
@@ -152,19 +174,20 @@ async function stream(req, res) {
   // + the USB bandwidth indefinitely. Viewers that are still live
   // reconnect automatically via the browser's <img> reload path.
   const MAX_STREAM_SECONDS = 900;
+  const useMjpeg = supportsMjpeg(cfg.device);
+  const inputArgs = ['-f', 'v4l2'];
+  if (useMjpeg) inputArgs.push('-input_format', 'mjpeg');
+  inputArgs.push(
+    '-video_size', cfg.resolution,
+    '-framerate', String(cfg.fps),
+    '-i', cfg.device,
+  );
+  const outputArgs = useMjpeg
+    ? ['-t', String(MAX_STREAM_SECONDS), '-c:v', 'copy', '-f', 'mpjpeg', '-']
+    : ['-t', String(MAX_STREAM_SECONDS), '-q:v', String(cfg.quality), '-f', 'mpjpeg', '-'];
   const ff = spawn(
     'ffmpeg',
-    [
-      '-hide_banner', '-loglevel', 'error',
-      '-f', 'v4l2',
-      '-video_size', cfg.resolution,
-      '-framerate', String(cfg.fps),
-      '-i', cfg.device,
-      '-t', String(MAX_STREAM_SECONDS),
-      '-q:v', String(cfg.quality),
-      '-f', 'mpjpeg',
-      '-',
-    ],
+    ['-hide_banner', '-loglevel', 'error', ...inputArgs, ...outputArgs],
     { stdio: ['ignore', 'pipe', 'pipe'] }
   );
   trackFfmpeg(ff);
@@ -188,4 +211,4 @@ async function stream(req, res) {
   req.on('close', kill);
 }
 
-module.exports = { snapshot, stream, status };
+module.exports = { snapshot, stream, status, supportsMjpeg };
