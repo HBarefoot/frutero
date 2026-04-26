@@ -3,6 +3,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { Q } = require('../database');
 const batches = require('../batches');
+const camera = require('../camera');
 
 // Scheduled snapshot capture for the CV subsystem. Reuses the same
 // ffmpeg + v4l2 path as /api/camera/snapshot but writes a file to disk
@@ -65,18 +66,16 @@ function targetPath(batchId) {
 // { ok, size, error }.
 function captureToFile(device, resolution, quality, outPath) {
   return new Promise((resolve) => {
+    const useMjpeg = camera.supportsMjpeg(device);
+    const inputArgs = ['-f', 'v4l2'];
+    if (useMjpeg) inputArgs.push('-input_format', 'mjpeg');
+    inputArgs.push('-video_size', resolution, '-i', device);
+    const outputArgs = useMjpeg
+      ? ['-frames:v', '1', '-c:v', 'copy', '-y', outPath]
+      : ['-frames:v', '1', '-q:v', String(quality), '-y', outPath];
     const ff = spawn(
       'ffmpeg',
-      [
-        '-hide_banner', '-loglevel', 'error',
-        '-f', 'v4l2',
-        '-video_size', resolution,
-        '-i', device,
-        '-frames:v', '1',
-        '-q:v', String(quality),
-        '-y', // overwrite (shouldn't happen given timestamps)
-        outPath,
-      ],
+      ['-hide_banner', '-loglevel', 'error', ...inputArgs, ...outputArgs],
       { stdio: ['ignore', 'ignore', 'pipe'] }
     );
     let stderr = '';
