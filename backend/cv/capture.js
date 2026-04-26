@@ -41,6 +41,7 @@ function settingsForCapture() {
     device: s.camera_device || '/dev/video0',
     resolution: s.camera_resolution || DEFAULT_RES,
     quality: parseInt(s.camera_quality, 10) || DEFAULT_QUALITY,
+    lowlight_mode: s.camera_lowlight_mode === 'on' ? 'on' : 'off',
   };
 }
 
@@ -133,6 +134,11 @@ async function capture({ trigger = 'scheduled' } = {}) {
     out.error = `no_camera_at_${cfg.device}`;
   } else {
     filePath = targetPath(batchId);
+    // Apply day/night v4l2 profile so scheduled CV snaps match the live
+    // stream's exposure baseline. Manual + scheduled both share this.
+    if (typeof camera.applyLowLightProfile === 'function') {
+      camera.applyLowLightProfile(cfg.device, cfg.lowlight_mode);
+    }
     out = await captureToFile(cfg.device, cfg.resolution, cfg.quality, filePath);
   }
 

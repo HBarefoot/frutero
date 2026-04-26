@@ -26,12 +26,16 @@ router.put('/camera', auth.requireAdmin, (req, res) => {
     const n = Number(body.quality);
     if (!Number.isFinite(n) || n < 1 || n > 31) errs.push('quality must be 1-31');
   }
+  if (body.lowlight_mode !== undefined && body.lowlight_mode !== 'on' && body.lowlight_mode !== 'off') {
+    errs.push('lowlight_mode must be "on" or "off"');
+  }
   if (errs.length) return res.status(400).json({ error: errs.join('; ') });
 
   if (body.device !== undefined) Q.setSetting('camera_device', body.device);
   if (body.resolution !== undefined) Q.setSetting('camera_resolution', body.resolution);
   if (body.fps !== undefined) Q.setSetting('camera_fps', String(body.fps));
   if (body.quality !== undefined) Q.setSetting('camera_quality', String(body.quality));
+  if (body.lowlight_mode !== undefined) Q.setSetting('camera_lowlight_mode', body.lowlight_mode);
 
   auth.logAudit(req, 'camera.config', null, body);
   res.json(camera.status());
