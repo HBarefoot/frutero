@@ -31,6 +31,44 @@ function supportsMjpeg(device) {
   return supported;
 }
 
+// Low-light mode profile. The Logitech C922 (and similar UVC webcams) has
+// no IR sensitivity — true night vision needs different hardware (Pi NoIR
+// + IR LEDs, or an actual security cam). What we CAN do via v4l2 controls
+// is push the sensor 2-3 stops harder so a dim chamber (e.g. lights on a
+// schedule with a brief window of darkness) is visible instead of pitch
+// black.
+//
+// Day profile = device defaults. Night profile = brightness boost, gain
+// boost, backlight compensation on, and let the camera drop framerate to
+// take longer exposures. Applied before every ffmpeg spawn so the camera's
+// internal state matches the user's setting (UVC controls are sticky on
+// the device until rebooted, so we always set both directions explicitly).
+const DAY_PROFILE = {
+  brightness: 128,
+  gain: 0,
+  backlight_compensation: 0,
+};
+const NIGHT_PROFILE = {
+  brightness: 200,
+  gain: 180,
+  backlight_compensation: 1,
+};
+function applyLowLightProfile(device, mode) {
+  const profile = mode === 'on' ? NIGHT_PROFILE : DAY_PROFILE;
+  const ctrls = Object.entries(profile).map(([k, v]) => `${k}=${v}`).join(',');
+  try {
+    execFileSync('v4l2-ctl', ['-d', device, `--set-ctrl=${ctrls}`], {
+      timeout: 2000,
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+  } catch (err) {
+    // Non-fatal: camera might not expose every control, or v4l2-ctl is
+    // missing. Stream still works with whatever the camera's current
+    // state is.
+    console.warn(`[camera] v4l2 ${mode === 'on' ? 'night' : 'day'} profile failed for ${device}: ${err.message?.slice(0, 200)}`);
+  }
+}
+
 // UVC webcams enforce single-reader: only one process can hold /dev/videoN
 // at a time. When the user toggles stream → snapshot the kernel takes a
 // moment to release the device after SIGTERM, so a naive spawn races with
@@ -68,6 +106,7 @@ function settings() {
     resolution: all.camera_resolution || DEFAULT_RES,
     fps: parseInt(all.camera_fps, 10) || DEFAULT_FPS,
     quality: parseInt(all.camera_quality, 10) || DEFAULT_QUALITY,
+    lowlight_mode: all.camera_lowlight_mode === 'on' ? 'on' : 'off',
   };
 }
 
@@ -85,6 +124,7 @@ function status() {
     resolution: cfg.resolution,
     fps: cfg.fps,
     quality: cfg.quality,
+    lowlight_mode: cfg.lowlight_mode,
     available,
   };
 }
@@ -118,6 +158,8 @@ async function snapshot(res) {
   // before opening a new ffmpeg. Without this a stream→snapshot toggle
   // races and hits EBUSY.
   await killCurrent();
+
+  applyLowLightProfile(cfg.device, cfg.lowlight_mode);
 
   const useMjpeg = supportsMjpeg(cfg.device);
   const inputArgs = ['-f', 'v4l2'];
@@ -169,6 +211,8 @@ async function stream(req, res) {
   // UVC device before we open a new one.
   await killCurrent();
 
+  applyLowLightProfile(cfg.device, cfg.lowlight_mode);
+
   // Self-terminate streams after 15 min even if the client keeps the
   // connection open. A forgotten background tab otherwise pins ffmpeg
   // + the USB bandwidth indefinitely. Viewers that are still live
@@ -211,4 +255,4 @@ async function stream(req, res) {
   req.on('close', kill);
 }
 
-module.exports = { snapshot, stream, status, supportsMjpeg };
+module.exports = { snapshot, stream, status, supportsMjpeg, applyLowLightProfile };
