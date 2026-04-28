@@ -30,6 +30,9 @@ if [ -e /sys/firmware/devicetree/base/model ]; then
     Raspberry\ Pi*) IS_PI=true; log "Hardware: $MODEL" ;;
   esac
 fi
+if [ "$IS_PI" = false ]; then
+  warn "Non-Pi host detected. Hardware page will show: USB ✓, Serial ✓, I²C/1-Wire/GPIO depending on board overlays. GPIO actuator UI is Pi-specific in v1."
+fi
 
 # Bookworm moved boot config to /boot/firmware; older Pi OS keeps /boot.
 if [ -f /boot/firmware/config.txt ]; then
@@ -52,7 +55,8 @@ fi
 #   v4l-utils  — /api/hardware/video (v4l2-ctl)
 #   i2c-tools  — /api/hardware/i2c (i2cdetect)
 #   build-essential / python3 — better-sqlite3 + @iiot2k/gpiox native compile
-SYSTEM_PKGS=(build-essential python3 ffmpeg v4l-utils i2c-tools)
+#   usbutils   — /api/hardware/usb (lsusb, vendor/product name fallback)
+SYSTEM_PKGS=(build-essential python3 ffmpeg v4l-utils i2c-tools usbutils)
 MISSING_PKGS=()
 for pkg in "${SYSTEM_PKGS[@]}"; do
   if ! dpkg -s "$pkg" >/dev/null 2>&1; then

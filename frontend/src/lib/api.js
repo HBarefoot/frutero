@@ -282,6 +282,15 @@ export async function fetchSetupHardwareScan() {
 export async function fetchHardwareGpio() {
   return (await api.get('/hardware/gpio')).data;
 }
+export async function fetchHardwareUsb() {
+  return (await api.get('/hardware/usb')).data;
+}
+export async function fetchHardwareSerial() {
+  return (await api.get('/hardware/serial')).data;
+}
+export async function fetchHardwarePlatform() {
+  return (await api.get('/hardware/platform')).data;
+}
 
 export async function fetchReadings(hours = 24) {
   return (await api.get('/readings', { params: { hours } })).data;
