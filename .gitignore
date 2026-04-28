@@ -9,6 +9,7 @@ backend/dev.db
 backend/dev.db-journal
 backend/dev.db-wal
 backend/dev.db-shm
+backend/data/
 *.log
 .env
 .env.local
