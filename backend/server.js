@@ -47,22 +47,18 @@ const terminalRoute = require('./routes/terminal');
 const speciesRoutes = require('./routes/species');
 const fleetAgent = require('./fleet-agent');
 
-async function main() {
-  db.init();
-  gpio.init();
-  sensor.setAlerts(alerts);
-  sensor.setAutomations(automations);
-  auth.startSessionJanitor();
-
-  const tlsCreds = loadTlsCredentials();
-  const tlsActive = !!tlsCreds;
-
+// Builds the configured Express app without binding to a port or starting
+// background loops. Exported so the test suite can mount the same app
+// under app.listen(0) and exercise it via fetch. db.init() must have run
+// before the app handles requests (auth.attachUser reads sessions); the
+// test harness handles that.
+function buildApp({ tlsEnabled = false } = {}) {
   const app = express();
   app.set('trust proxy', true);
   // Helmet's HSTS + CSP upgrade-insecure-requests only enable when TLS
   // is actually live — avoids trapping operators in HTTPS-redirect hell
   // if the cert is later removed for some reason.
-  app.use(securityHeaders({ tlsEnabled: tlsActive }));
+  app.use(securityHeaders({ tlsEnabled }));
   app.use(originCheck({
     trustedOrigins: (process.env.TRUSTED_ORIGINS || '')
       .split(',')
@@ -186,6 +182,21 @@ async function main() {
     res.status(500).json({ error: err.message || 'internal error' });
   });
 
+  return app;
+}
+
+async function main() {
+  db.init();
+  gpio.init();
+  sensor.setAlerts(alerts);
+  sensor.setAutomations(automations);
+  auth.startSessionJanitor();
+
+  const tlsCreds = loadTlsCredentials();
+  const tlsActive = !!tlsCreds;
+
+  const app = buildApp({ tlsEnabled: tlsActive });
+
   // Primary server carries the real app. If TLS is live, it's HTTPS on
   // HTTPS_PORT and an auxiliary HTTP redirector listens on PORT. If TLS
   // is off, the app serves HTTP directly on PORT.
@@ -296,12 +307,17 @@ async function main() {
   });
 }
 
-main().catch((err) => {
-  console.error('[server] fatal:', err);
-  try {
-    gpio.cleanup();
-  } catch {
-    // ignore
-  }
-  process.exit(1);
-});
+// Allow `require('./server')` from tests without auto-starting.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('[server] fatal:', err);
+    try {
+      gpio.cleanup();
+    } catch {
+      // ignore
+    }
+    process.exit(1);
+  });
+}
+
+module.exports = { buildApp, main };

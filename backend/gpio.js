@@ -243,7 +243,7 @@ function checkSafety(key, wantOn) {
 }
 
 // Updates safety counters after a transition. Also arms the max-on auto-off.
-function recordTransition(key, on, trigger) {
+function recordTransition(key, on, _trigger) {
   const now = Date.now();
   const safety = safetyConfig(key);
 

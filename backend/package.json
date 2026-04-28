@@ -8,11 +8,13 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "dev:stub": "PORT=3001 GPIO_STUB=true SENSOR_STUB=true DB_PATH=./dev.db PUBLIC_DIR=../frontend/dist node --watch server.js",
-    "seed": "node scripts/seed.js"
+    "seed": "node scripts/seed.js",
+    "lint": "eslint .",
+    "test": "NODE_ENV=test GPIO_STUB=true SENSOR_STUB=true node --test --test-reporter=spec test/",
+    "audit:ci": "npm audit --audit-level=high"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.0",
-    "@iiot2k/gpiox": "^3.0.6",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^11.3.0",
     "cookie-parser": "^1.4.7",
@@ -27,7 +29,13 @@
     "web-push": "^3.6.7",
     "ws": "^8.18.0"
   },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "eslint": "^9.20.0",
+    "globals": "^15.15.0"
+  },
   "optionalDependencies": {
+    "@iiot2k/gpiox": "^3.0.6",
     "node-dht-sensor": "^0.4.5"
   },
   "engines": {
