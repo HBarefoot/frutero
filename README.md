@@ -24,6 +24,10 @@ The installer is idempotent. It installs Node.js 20 if missing, builds the front
 
 Once installed, the dashboard is reachable at `http://<pi-ip>:3000` from any device on the same network.
 
+## Recovery
+
+For SD card failure, DB corruption, sensor silence, mid-photoperiod restart, fleet-agent disconnects, hardware swaps, and schema drift — see [docs/recovery.md](./docs/recovery.md).
+
 ## Activating the real DHT22
 
 When the sensor is wired up:
