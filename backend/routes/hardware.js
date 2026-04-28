@@ -1,6 +1,7 @@
 const express = require('express');
 const auth = require('../auth');
 const hardware = require('../hardware');
+const platform = require('../platform');
 const { getHostStats } = require('../host');
 
 const router = express.Router();
@@ -34,6 +35,18 @@ router.get('/hardware/sensors', auth.requireAdmin, (_req, res) => {
 
 router.get('/hardware/video', auth.requireAdmin, (_req, res) => {
   res.json(hardware.scanVideo());
+});
+
+router.get('/hardware/usb', auth.requireAdmin, (_req, res) => {
+  res.json(hardware.scanUSB());
+});
+
+router.get('/hardware/serial', auth.requireAdmin, (_req, res) => {
+  res.json(hardware.scanSerial());
+});
+
+router.get('/hardware/platform', auth.requireAdmin, (_req, res) => {
+  res.json(platform.getPlatformInfo());
 });
 
 // Pi host health: SoC temp, load, memory, disk, throttle flags.

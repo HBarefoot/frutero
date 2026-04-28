@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Thermometer,
   Trash2,
+  Usb,
   Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -117,10 +118,13 @@ export default function HardwarePage() {
         title="Hardware"
         description="Detect connected sensors, manage GPIO actuators, and test wiring"
         actions={
-          <Button variant="outline" size="sm" onClick={rescan} disabled={scanBusy}>
-            <RefreshCw className={cn(scanBusy && 'animate-spin')} />
-            Rescan
-          </Button>
+          <div className="flex items-center gap-2">
+            {scan?.platform && <PlatformPill platform={scan.platform} />}
+            <Button variant="outline" size="sm" onClick={rescan} disabled={scanBusy}>
+              <RefreshCw className={cn(scanBusy && 'animate-spin')} />
+              Rescan
+            </Button>
+          </div>
         }
       />
 
@@ -128,6 +132,7 @@ export default function HardwarePage() {
         <div className="space-y-6">
           <ActuatorsCard
             actuators={actuators}
+            gpioAvailable={scan?.gpio?.available !== false}
             onEdit={setEditing}
             onDelete={async (key) => {
               if (!confirm(`Delete actuator '${key}'? Schedules referencing it must be removed first.`)) return;
@@ -157,6 +162,8 @@ export default function HardwarePage() {
           <I2CCard scan={scan} />
           <SensorsCard scan={scan} />
           <VideoCard scan={scan} />
+          <UsbCard scan={scan} />
+          <SerialCard scan={scan} />
         </div>
       </div>
 
@@ -183,7 +190,7 @@ function errMsg(err) {
 
 // --- Actuators table -------------------------------------------------
 
-function ActuatorsCard({ actuators, onEdit, onDelete, onTest, onAdd }) {
+function ActuatorsCard({ actuators, gpioAvailable = true, onEdit, onDelete, onTest, onAdd }) {
   return (
     <Card>
       <CardHeader>
@@ -194,7 +201,12 @@ function ActuatorsCard({ actuators, onEdit, onDelete, onTest, onAdd }) {
           </div>
           <CardDescription>Relay channels mapped to GPIO pins · {actuators.length} configured</CardDescription>
         </CardTitleGroup>
-        <Button size="sm" onClick={onAdd}>
+        <Button
+          size="sm"
+          onClick={onAdd}
+          disabled={!gpioAvailable}
+          title={gpioAvailable ? undefined : 'GPIO not available on this host'}
+        >
           <Plus />
           Add actuator
         </Button>
@@ -449,7 +461,10 @@ function ActuatorDialog({ mode, existing, gpioPins, onClose, onSaved }) {
 // --- GPIO map --------------------------------------------------------
 
 function GpioMapCard({ scan }) {
-  const pins = scan?.gpio?.pins || [];
+  const gpio = scan?.gpio;
+  const pins = gpio?.pins || [];
+  const unavailable = gpio?.available === false;
+  const reasonOnly = gpio?.available === true && pins.length === 0 && (gpio.reason || gpio.chips?.length);
   return (
     <Card>
       <CardHeader>
@@ -460,12 +475,33 @@ function GpioMapCard({ scan }) {
           </div>
           <CardDescription>
             BCM pin allocation
-            {scan?.gpio?.mock && <span className="ml-2 text-warning">(mock mode)</span>}
+            {gpio?.mock && <span className="ml-2 text-warning">(mock mode)</span>}
           </CardDescription>
         </CardTitleGroup>
       </CardHeader>
       <CardContent className="pt-0">
-        {pins.length === 0 ? (
+        {unavailable ? (
+          <Empty text={gpio?.reason || 'GPIO not available on this host.'} />
+        ) : reasonOnly ? (
+          <div className="space-y-2 text-xs text-muted-foreground">
+            {gpio.reason && <p>{gpio.reason}</p>}
+            {gpio.chips?.length > 0 && (
+              <ul className="space-y-1">
+                {gpio.chips.map((c) => (
+                  <li
+                    key={c.path}
+                    className="flex items-center justify-between rounded-md border border-border bg-background/40 px-3 py-2 font-mono"
+                  >
+                    <span>{c.path}</span>
+                    <span className="text-muted-foreground">
+                      {c.label || 'gpiochip'}{c.lines != null ? ` · ${c.lines} lines` : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : pins.length === 0 ? (
           <Loading />
         ) : (
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
@@ -816,6 +852,127 @@ function fmtUptime(sec) {
   if (d > 0) return `${d}d ${h}h`;
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
+}
+
+// --- USB peripherals -------------------------------------------------
+
+function UsbCard({ scan }) {
+  const u = scan?.usb;
+  const devices = u?.devices || [];
+  const caption = !u
+    ? 'Scanning…'
+    : u.available === false
+      ? 'not available on this host'
+      : devices.length === 0
+        ? 'no USB devices detected'
+        : `${devices.length} device${devices.length === 1 ? '' : 's'}`;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitleGroup>
+          <div className="flex items-center gap-2">
+            <Usb className="size-4 text-muted-foreground" />
+            <CardTitle>USB peripherals</CardTitle>
+          </div>
+          <CardDescription>{caption}</CardDescription>
+        </CardTitleGroup>
+      </CardHeader>
+      {u && devices.length > 0 && (
+        <CardContent className="pt-0">
+          <ul className="space-y-1 text-xs">
+            {devices.map((d) => (
+              <li
+                key={`${d.bus_path}-${d.vid_hex}-${d.pid_hex}`}
+                className="flex items-center justify-between gap-2 rounded-md border border-border bg-background/40 px-3 py-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-medium">
+                      {d.product_name || d.vendor_name || 'Unknown device'}
+                    </span>
+                    {d.class_label && <Badge variant="outline">{d.class_label}</Badge>}
+                  </div>
+                  {d.vendor_name && d.product_name && (
+                    <div className="truncate text-[11px] text-muted-foreground">{d.vendor_name}</div>
+                  )}
+                </div>
+                <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                  {d.vid_hex}:{d.pid_hex}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {u.hint && (
+            <p className="mt-2 text-[11px] text-muted-foreground">{u.hint}</p>
+          )}
+        </CardContent>
+      )}
+      {u?.available === false && u.reason && (
+        <CardContent className="pt-0">
+          <Empty text={u.reason} />
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
+// --- Serial ports ----------------------------------------------------
+
+function SerialCard({ scan }) {
+  const s = scan?.serial;
+  const ports = s?.ports || [];
+  if (s?.available === true && ports.length === 0) return null; // hide noise on quiet hosts
+  const caption = !s
+    ? 'Scanning…'
+    : s.available === false
+      ? 'not available on this host'
+      : `${ports.length} serial port${ports.length === 1 ? '' : 's'}`;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitleGroup>
+          <div className="flex items-center gap-2">
+            <Cable className="size-4 text-muted-foreground" />
+            <CardTitle>Serial ports</CardTitle>
+          </div>
+          <CardDescription>{caption}</CardDescription>
+        </CardTitleGroup>
+      </CardHeader>
+      {s && ports.length > 0 && (
+        <CardContent className="pt-0">
+          <ul className="space-y-1 text-xs">
+            {ports.map((p) => (
+              <li
+                key={p.path}
+                className="flex items-center justify-between gap-2 rounded-md border border-border bg-background/40 px-3 py-2"
+              >
+                <span className="font-mono">{p.path}</span>
+                <span className="truncate text-muted-foreground">
+                  {p.product_name || p.vendor_name || p.driver || '—'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      )}
+      {s?.available === false && s.reason && (
+        <CardContent className="pt-0">
+          <Empty text={s.reason} />
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
+// --- Platform pill ---------------------------------------------------
+
+function PlatformPill({ platform }) {
+  const label = platform.is_raspberry_pi ? 'Raspberry Pi' : platform.kind;
+  return (
+    <Badge variant="muted" className="font-mono text-[11px]" title={platform.model_string || ''}>
+      {label} · {platform.arch}
+    </Badge>
+  );
 }
 
 // --- Helpers ---------------------------------------------------------

@@ -1,16 +1,19 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const { execSync } = require('node:child_process');
+const platform = require('./platform');
 
-// Read the Pi SoC temperature. On Bookworm, /sys/class/thermal/thermal_zone0
+// Read the SoC temperature. On Linux/Pi, /sys/class/thermal/thermal_zone0
 // reports the CPU temp in millidegrees C. Fallback to vcgencmd for older
-// firmware or non-thermal-framework kernels. Returns null on non-Pi hosts.
+// firmware. Returns null on macOS or any host without a thermal framework.
 function cpuTempC() {
+  if (platform.getPlatformInfo().kind !== 'linux') return null;
   try {
     const raw = fs.readFileSync('/sys/class/thermal/thermal_zone0/temp', 'utf8').trim();
     const n = parseInt(raw, 10);
     if (Number.isFinite(n)) return n / 1000;
   } catch { /* fall through */ }
+  if (!platform.getPlatformInfo().capabilities.vcgencmd) return null;
   try {
     // vcgencmd output is like "temp=45.3'C"
     const out = execSync('vcgencmd measure_temp', { encoding: 'utf8', timeout: 500 });
@@ -26,6 +29,7 @@ function cpuTempC() {
 // "has occurred since boot"). A healthy Pi reports 0x0; anything non-zero
 // warrants a card-level warning.
 function throttledFlags() {
+  if (!platform.getPlatformInfo().capabilities.vcgencmd) return null;
   try {
     const out = execSync('vcgencmd get_throttled', { encoding: 'utf8', timeout: 500 });
     const m = /throttled=0x([0-9a-f]+)/i.exec(out);
@@ -65,12 +69,8 @@ function diskUsage(mount = '/') {
 }
 
 function piModel() {
-  try {
-    const raw = fs.readFileSync('/sys/firmware/devicetree/base/model', 'utf8');
-    return raw.replace(/\0/g, '').trim();
-  } catch {
-    return null;
-  }
+  const info = platform.getPlatformInfo();
+  return info.is_raspberry_pi ? info.model_string : null;
 }
 
 function kernelRelease() {
