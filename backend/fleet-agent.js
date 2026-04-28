@@ -19,7 +19,6 @@ const sensor = require('./sensor');
 const gpio = require('./gpio');
 const host = require('./host');
 const batches = require('./batches');
-const config = require('./config');
 const tunnels = require('./tunnels');
 
 // Cached candidate list. Tunnel detection involves a few cheap shell

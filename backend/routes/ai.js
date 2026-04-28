@@ -11,15 +11,6 @@ const router = express.Router();
 // API key is write-only from the client's perspective — we never echo
 // it back. Responses include a boolean `has_key` flag instead.
 
-const CONFIG_FIELDS = [
-  'ai_enabled',
-  'ai_provider',
-  'ai_anthropic_model',
-  'ai_ollama_base_url',
-  'ai_ollama_model',
-  'ai_cadence_hours',
-];
-
 function currentConfig() {
   const s = Q.getAllSettings();
   return {
