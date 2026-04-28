@@ -414,6 +414,23 @@ function cleanup() {
   }
 }
 
+// Test-only: wipe the in-memory clamp counters (lastOffAt, currentOnAt,
+// dailyOn, state, manualOverride) so each test in safety-clamp.test.js
+// starts from a cold state without dropping the actuator row. Pulse +
+// safety auto-off timers are also cleared so a long-running max_on
+// timer from a prior test can't fire during the next one.
+function _resetForTesting() {
+  for (const t of pulseTimers.values()) clearTimeout(t);
+  pulseTimers.clear();
+  for (const t of safetyOffTimers.values()) clearTimeout(t);
+  safetyOffTimers.clear();
+  state.clear();
+  manualOverride.clear();
+  lastOffAt.clear();
+  currentOnAt.clear();
+  dailyOn.clear();
+}
+
 // Backward-compat shims so any callers still using setFan/setLight keep
 // working until they're migrated.
 function setFan(on, trigger = 'manual', userId = null) {
@@ -447,4 +464,6 @@ module.exports = {
   setLight,
   getFanState,
   getLightState,
+  // test-only
+  _resetForTesting,
 };
