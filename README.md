@@ -1,41 +1,70 @@
-# Mushroom Grow Chamber Automation
+# Frutero
 
-Full-stack automation for a monotub fruiting chamber on a Raspberry Pi 4B. Controls grow lights and exhaust/FAE fans via a 2-channel relay module, logs DHT22 temperature/humidity, and serves a dark-themed mobile-friendly web dashboard over the local network.
+**Open-source mushroom farm controller for Raspberry Pi.**
 
-## Hardware
+Run your monotub fruiting chamber on a Pi 4B — schedules, automations, sensor logging, live camera, and an AI advisor — all on your local network, no account required. Built for indie growers who want a real controller without paying SaaS rent for a chamber sitting on their kitchen counter.
 
-| Pin        | Function                          |
-| ---------- | --------------------------------- |
-| GPIO 17    | Relay K1 → LED grow lights (AC)   |
-| GPIO 18    | Relay K2 → 2x 80mm fans (12V DC)  |
-| GPIO 4     | DHT22 data (sensor stubbed until connected) |
-| Pin 1 (3V3)| DHT22 VCC                         |
-| Pin 9 (GND)| DHT22 GND                         |
+---
 
-Relay module is **low-level trigger** — GPIO `LOW` = relay ON, GPIO `HIGH` = relay OFF. Inversion is handled inside `backend/gpio.js`; the rest of the code uses boolean `on`/`off` semantics.
+## What you can do with it
 
-## Install
+- **Run grow lights on a 12/12 photoperiod** (or any cron) with auto-recovery if the Pi reboots mid-cycle — boot-time state restore reads your schedule and brings actuators back to their desired state.
+- **Mist the chamber when humidity drops** below your threshold, with safety clamps so an ultrasonic atomizer disc never dry-fires (max-on, min-off, daily-cap, all enforced in the GPIO layer).
+- **Stream the chamber from a USB cam** to your phone over LAN, take snapshots from the dashboard, and get an auto-generated timelapse when you archive a batch.
+- **Get an AI advisor** (Anthropic Claude or self-hosted Ollama) that reads your sensor trends + camera observations and flags contamination risk or pinning issues early. Configurable cadence, your own API key.
+- **Track grow batches end-to-end** — phase transitions (inoculation → colonization → pinning → fruiting → harvest), per-batch yield, and an AI retrospective when you archive.
+- **Get pinged when something's wrong** via Telegram, email, webhook, or browser push — sensor silence, temp drift, contamination warnings, mister safety blocks.
+- **Share the dashboard with your team** with three roles (owner / operator / viewer). Bring in a co-grower as viewer or operator without giving them root.
+- **Browser-based SSH into the Pi** from inside the dashboard (admin-only, password-gated) — handy when you're a few rooms away from the chamber and don't want to dig out a laptop.
+
+---
+
+## Quick start
 
 ```bash
+git clone https://github.com/HBarefoot/frutero
+cd frutero
 ./install.sh
 ```
 
-The installer is idempotent. It installs Node.js 20 if missing, builds the frontend, seeds the SQLite database, and installs a `mushroom-automation` systemd service that starts on boot.
+Open `https://<pi-ip>:3443` (accept the self-signed cert), create your owner account, and you're live.
 
-Once installed, the dashboard is reachable at `http://<pi-ip>:3000` from any device on the same network.
+The installer is idempotent — safe to re-run anytime. It installs Node.js 20 if missing, builds the frontend, seeds the SQLite database, generates an ECDSA TLS cert, installs `mushroom-automation` as a systemd unit, and rotates journald to keep your SD card from filling up. Adds your user to the `gpio` group and bootstraps a browser terminal (`ttyd`) for in-dashboard SSH.
 
-## Recovery
+---
 
-For SD card failure, DB corruption, sensor silence, mid-photoperiod restart, fleet-agent disconnects, hardware swaps, and schema drift — see [docs/recovery.md](./docs/recovery.md).
+## Hardware
 
-## Activating the real DHT22
+This runs on a Raspberry Pi 4B with a small bill of materials — a 2-channel relay module, a DHT22 temperature/humidity sensor, and optionally a USB camera and an ultrasonic mister. Full wiring + GPIO pinout: **[docs/hardware.md](./docs/hardware.md)**.
 
-When the sensor is wired up:
+---
 
-1. Edit `backend/config.js` and set `SENSOR_AVAILABLE: true`.
-2. `sudo systemctl restart mushroom-automation`.
+## Connect to the cloud (optional)
 
-The "Simulated data" badge disappears and the dashboard switches to real readings. No other changes required.
+Frutero is fully featured on its own. You can run a chamber forever without ever signing up for anything. But if you're running more than one chamber, want notifications when you're off the LAN, or want fleet-wide AI insights, the **Frutero Fleet** cloud picks up where the Pi leaves off.
+
+**What the cloud adds:**
+
+- **Multi-chamber dashboard** — every Pi you own on one screen
+- **Cross-chamber compare** — overlay temp/humidity from any 2–8 chambers
+- **Yield rankings** — which chamber is winning, by species, over time
+- **Fleet-wide AI advisor** — insights that span chambers, not just one
+- **Web push to your phone, anywhere** — not just on your home LAN
+- **Browser terminal that works from outside your house**
+- **Team, audit log, and billing** for small-farm operators
+
+**Tiers:** Hobby (1 chamber, free) → Grower (per-chamber/month) → Farm (unlimited).
+
+**To connect:**
+
+1. Sign up at <https://frutero-fleet-production.up.railway.app>.
+2. From the cloud dashboard, click *Add chamber* and copy the one-time enrollment code.
+3. On your Pi dashboard, go to **Security → Fleet**. Paste the cloud URL, the enrollment code, and an optional chamber name. Click *Enroll this Pi*.
+4. The Fleet card flips to "Connected" within ~60s. Done.
+
+The Pi only ever talks **outbound** to the cloud — no inbound ports opened, no tunneling required. You can disconnect from the same card any time, and the Pi keeps running standalone.
+
+---
 
 ## Service management
 
@@ -45,11 +74,26 @@ sudo systemctl restart mushroom-automation
 sudo journalctl -u mushroom-automation -f
 ```
 
-## Development
-
-Run the backend and frontend separately with hot reload:
+## Updating
 
 ```bash
-cd backend && npm run dev     # Express on :3000 with --watch
-cd frontend && npm run dev    # Vite on :5173 with /api + /ws proxied to :3000
+git pull
+./install.sh
 ```
+
+The installer is idempotent, so re-running it picks up new dependencies, rebuilds the frontend, and restarts the service in place.
+
+## Recovery
+
+For SD-card failure, DB corruption, sensor silence, mid-photoperiod restart, fleet-agent disconnects, hardware swaps, and schema drift — see **[docs/recovery.md](./docs/recovery.md)**.
+
+## Development
+
+Run the backend and frontend with stubbed hardware so you can hack on a laptop or a second-Pi dev box without touching the real chamber:
+
+```bash
+cd backend && npm run dev:stub   # PORT=3001, GPIO_STUB=true, SENSOR_STUB=true, dev.db
+cd frontend && npm run dev       # Vite on :5173 with /api + /ws proxied
+```
+
+The stub backend runs side-by-side with prod on a different port and database, so you can iterate on UI without disturbing a live grow.
